@@ -1,0 +1,16 @@
+[Unit]
+Description=Arc Local Ecosystem Daemon
+After=network.target sound.target bluetooth.target
+Requires=bluetooth.target
+
+[Service]
+Type=simple
+# Assumes a virtual environment at ~/arc/venv (standard user setup for Ubuntu 24.04 PEP 668)
+ExecStart=%h/arc/venv/bin/python3 -u %h/arc/daemon/src/main.py
+Restart=on-failure
+RestartSec=5
+Environment=PYTHONUNBUFFERED=1
+WorkingDirectory=%h/arc
+
+[Install]
+WantedBy=default.target

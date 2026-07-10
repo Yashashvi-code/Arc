@@ -1,0 +1,151 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Arc Ecosystem Panel</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body class="substrate-grid dark-theme">
+  
+  <div class="app-layout">
+    <!-- Left-Hand Navigation Sidebar -->
+    <aside class="sidebar card-appear">
+      <div class="sidebar-brand">
+        <div class="logo">ARC</div>
+        <div class="eyebrow">LINK ENGINE</div>
+      </div>
+      
+      <nav class="nav-menu">
+        <div class="nav-item active" data-tab="dashboard">[ DASHBOARD ]</div>
+        <div class="nav-item" data-tab="history">[ HISTORY ]</div>
+        <div class="nav-item" data-tab="settings">[ SETTINGS ]</div>
+      </nav>
+      
+      <div class="sidebar-footer">
+        <div class="connection-status">
+          <div class="led-dot" id="status-led"></div>
+          <div class="status-info">
+            <span class="label" id="status-text">OFFLINE</span>
+          </div>
+        </div>
+      </div>
+    </aside>
+
+    <!-- Main View Panel -->
+    <main class="content-panel card-appear">
+      
+      <!-- Tab 1: DASHBOARD VIEW (Consolidated Send & Receive) -->
+      <section class="view active-view" id="view-dashboard">
+        <div class="view-header">
+          <h1 class="view-title">DASHBOARD</h1>
+          <div class="eyebrow">LOCAL SUBNET LINK STATUS</div>
+        </div>
+
+        <!-- Ecosystem Network Banner -->
+        <div class="env-banner">
+          <div class="env-item">
+            <span class="label">PC IP:</span>
+            <span class="value" id="pc-ip-label">...</span>
+          </div>
+          <div class="env-item">
+            <span class="label">PHONE LINK:</span>
+            <span class="value" id="target-ip-label">UNPAIRED</span>
+          </div>
+          <div class="env-item">
+            <span class="label">DOWNLOADS:</span>
+            <span class="value downloads-path" id="downloads-path-label">...</span>
+          </div>
+        </div>
+        
+        <!-- Drop & Selection Zone -->
+        <div class="drop-zone" id="drop-zone">
+          <div class="drop-icon">↑</div>
+          <div class="drop-label">DRAG & DROP FILES HERE</div>
+          <div class="drop-sublabel">TO STREAM DIRECTLY TO PHONE</div>
+          <div class="status-btn" id="send-file-btn" style="margin-top: 15px;">[ CHOOSE FILE ]</div>
+        </div>
+
+        <!-- Minimal Progress Deck (Always Visible & Adaptive) -->
+        <div class="progress-deck">
+          <div class="progress-status">
+            <span id="progress-status-label">READY</span>
+            <span id="progress-speed-label"></span>
+          </div>
+          <div class="progress-track">
+            <div class="progress-bar" id="progress-bar"></div>
+          </div>
+        </div>
+        
+        <!-- Quick Text Share -->
+        <div class="card">
+          <div class="card-header">QUICK TEXT CLIPBOARD SYNC</div>
+          <textarea id="text-share-box" placeholder="TYPE OR PASTE TEXT TO PUSH TO PHONE CLIPBOARD..."></textarea>
+          <div class="status-btn" id="send-text-btn" style="margin-top: 8px;">[ SYNC TEXT ]</div>
+        </div>
+      </section>
+
+      <!-- Tab 2: HISTORY VIEW -->
+      <section class="view" id="view-history">
+        <div class="view-header">
+          <h1 class="view-title">HISTORY</h1>
+          <div class="eyebrow">CHRONOLOGICAL TRANSACTIONS</div>
+        </div>
+
+        <div class="history-panel-expanded">
+          <div class="history-header">
+            <div class="section-label">ECOSYSTEM HISTORY LOG</div>
+            <button class="icon-btn" id="clear-btn" title="Clear Logs">
+              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+                <polyline points="3 6 5 6 21 6"></polyline>
+                <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
+                <line x1="10" y1="11" x2="10" y2="17"></line>
+                <line x1="14" y1="11" x2="14" y2="17"></line>
+              </svg>
+            </button>
+          </div>
+          <div class="history-list-expanded" id="history-list">
+            <div class="history-item">
+              <span class="icon">•</span>
+              <span class="text">CLIPBOARD WAITING...</span>
+              <span class="time">--:--</span>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- Tab 3: SETTINGS VIEW -->
+      <section class="view" id="view-settings">
+        <div class="view-header">
+          <h1 class="view-title">SETTINGS</h1>
+          <div class="eyebrow">SYSTEM & VIEW TOGGLES</div>
+        </div>
+
+        <div class="card-grid">
+          <!-- Appearance Card -->
+          <div class="card">
+            <div class="card-header">THEME PREFERENCE</div>
+            <div class="setting-row" style="margin-bottom: 12px;">
+              <span class="setting-label">COLOR ENGINE:</span>
+              <div class="status-btn" id="theme-btn">[ LIGHT ]</div>
+            </div>
+            <div class="setting-row">
+              <span class="setting-label">ALWAYS ON TOP:</span>
+              <div class="status-btn" id="pin-btn">[ PIN ]</div>
+            </div>
+          </div>
+
+          <!-- Diagnostic Info Card -->
+          <div class="card">
+            <div class="card-header">ARCHITECTURE DETAILS</div>
+            <p class="settings-desc">Arc runs a zero-compression local Wi-Fi TCP data plane on port 59152. File transfers are streamed byte-by-byte direct from disk, supporting files of any size without compression. Sync coordinates on Android to manually pair when BLE is offline.</p>
+          </div>
+        </div>
+      </section>
+
+    </main>
+  </div>
+
+  <script src="main.js"></script>
+</body>
+</html>

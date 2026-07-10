@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <!-- Clean, minimalist monospace letter 'A' -->
+    <path
+        android:strokeColor="#FFFFFF"
+        android:strokeWidth="3.5"
+        android:strokeLineCap="round"
+        android:pathData="M 38,72 L 54,36" />
+    <path
+        android:strokeColor="#FFFFFF"
+        android:strokeWidth="3.5"
+        android:strokeLineCap="round"
+        android:pathData="M 54,36 L 70,72" />
+    <path
+        android:strokeColor="#FFFFFF"
+        android:strokeWidth="3.5"
+        android:strokeLineCap="round"
+        android:pathData="M 44,60 L 64,60" />
+    <!-- Signature Nothing OS red accent dot -->
+    <path
+        android:fillColor="#FF0800"
+        android:pathData="M 77,69 A 2.5,2.5 0 1,1 72,69 A 2.5,2.5 0 1,1 77,69 Z" />
+</vector>

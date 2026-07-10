@@ -1,0 +1,28 @@
+# Python Caches & Temp
+__pycache__/
+*.py[cod]
+*$py.class
+daemon/temp/
+*.part
+
+# Android Build Outputs & Gradle Caches
+.gradle/
+build/
+app/build/
+local.properties
+*.apk
+*.ap_
+*.dex
+*.class
+.cxx/
+.externalNativeBuild/
+
+# Tauri Node Modules & Build Targets
+node_modules/
+panel/src-tauri/target/
+panel/dist/
+.tauri/
+
+# OS-specific files
+.DS_Store
+Thumbs.db
