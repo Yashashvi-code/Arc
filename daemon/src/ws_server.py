@@ -16,10 +16,14 @@ class ArcWsServer:
         self.clients = set()
         self.server = None
         self.loop = None
+        self.last_transfer_stats = None
 
     async def register(self, websocket):
         self.clients.add(websocket)
         logging.info(f"UI Client connected. Total: {len(self.clients)}")
+        # Replay last known transfer state so panel isn't blind on reconnect
+        if hasattr(self, 'last_transfer_stats') and self.last_transfer_stats:
+            await websocket.send(json.dumps(self.last_transfer_stats))
         # Send initial state (clipboard history)
         history = self.db.get_clipboard_history(limit=5)
         initial_state = {
@@ -130,7 +134,11 @@ class ArcWsServer:
             root.withdraw()
             root.attributes("-topmost", True)
             
-            file_path = filedialog.askopenfilename(title="Select File to Send")
+            import os
+            file_path = filedialog.askopenfilename(
+                title="Select File to Send",
+                initialdir=os.path.expanduser("~")
+            )
             root.destroy()
             
             if file_path and os.path.exists(file_path):
@@ -159,15 +167,18 @@ class ArcWsServer:
             nonlocal last_time, last_bytes, current_speed
             now = py_time.time()
             dt = now - last_time
-            if dt >= 1.0:
+            elapsed = now - start_time
+            if dt >= 0.25:
                 db = bytes_sent - last_bytes
-                raw_speed = (db / dt) / (1024 * 1024)
-                current_speed = 0.3 * raw_speed + 0.7 * current_speed
+                raw_speed = (db / dt) / (1024 * 1024) if dt > 0 else 0
+                if current_speed == 0.0:
+                    current_speed = raw_speed
+                else:
+                    current_speed = 0.3 * raw_speed + 0.7 * current_speed
                 last_time = now
                 last_bytes = bytes_sent
-            elif current_speed == 0.0:
-                elapsed = now - start_time
-                current_speed = (bytes_sent / elapsed) / (1024 * 1024) if elapsed > 0 else 0.0
+            elif current_speed == 0.0 and elapsed > 0:
+                current_speed = (bytes_sent / elapsed) / (1024 * 1024)
                 
             percent = int((bytes_sent / total_size) * 100)
             asyncio.run_coroutine_threadsafe(
@@ -177,7 +188,7 @@ class ArcWsServer:
                     "progress_percent": percent,
                     "speed_mb": current_speed
                 }),
-                self.daemon.loop
+                self.loop
             )
 
         client = ArcWifiClient(host=phone_host, port=59152)
@@ -198,7 +209,7 @@ class ArcWsServer:
         # Broadcast outcome
         asyncio.run_coroutine_threadsafe(
             self.broadcast("transfer_stats", {
-                "state": "COMPLETED" if success else "ERROR",
+                "state": "SENT" if success else "ERROR",
                 "file_name": file_name,
                 "progress_percent": 100 if success else 0,
                 "speed_mb": 0.0
@@ -235,6 +246,8 @@ class ArcWsServer:
             logging.error(f"Failed to start WebSocket server: {e}")
 
     async def broadcast(self, event: str, data: any):
+        if event == "transfer_stats":
+            self.last_transfer_stats = {"event": event, "data": data}
         if not self.clients:
             return
             

@@ -66,10 +66,12 @@ class ArcDaemon:
             phone_host = getattr(self, "phone_host", None)
             if phone_host:
                 if is_file:
-                    asyncio.run_coroutine_threadsafe(
-                        self.ws_server.async_send_to_phone(text, phone_host, is_clipboard=True),
-                        self.loop
-                    )
+                    from wifi_client import ArcWifiClient
+                    from threading import Thread
+                    def send_wifi_image():
+                        client = ArcWifiClient(host=phone_host, port=59152)
+                        client.send_file(text, is_clipboard=True)
+                    Thread(target=send_wifi_image, daemon=True).start()
                 else:
                     from wifi_client import ArcWifiClient
                     from threading import Thread
@@ -78,10 +80,29 @@ class ArcDaemon:
                         client.send_clipboard(text)
                     Thread(target=send_wifi_clipboard, daemon=True).start()
 
+    def get_local_ip(self):
+        import socket
+        try:
+            s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            s.connect(("8.8.8.8", 80))
+            ip = s.getsockname()[0]
+            s.close()
+            return ip
+        except Exception:
+            return "127.0.0.1"
+
     def handle_coordinates(self, host: str, port: int):
         logging.info(f"IPC Coordinate Sync: Client paired at {host}:{port}")
         self.phone_host = host
         self.phone_port = port
+        # Send laptop IP back to phone over BLE so phone knows where to send files
+        if hasattr(self, 'loop') and self.loop:
+            laptop_ip = self.get_local_ip()
+            logging.info(f"Sending laptop IP to phone: {laptop_ip}")
+            asyncio.run_coroutine_threadsafe(
+                self.ble_server.notify_pc_ip(laptop_ip),
+                self.loop
+            )
         # Notify WebSocket UI of new pairing state
         if hasattr(self, 'loop') and self.loop:
             asyncio.run_coroutine_threadsafe(
@@ -112,46 +133,11 @@ class ArcDaemon:
 
         logging.info("Arc Daemon fully started. Press Ctrl+C to terminate.")
         
-        # Main thread loop: monitor Wi-Fi transfer metrics and broadcast to UI
+        # Daemon stays alive — transfer stats are broadcast by wifi_server.py (inbound)
+        # and ws_server.py (outbound) as single sources of truth
         try:
             while True:
-                # Check for active file transfer speeds and notify UI
-                # We can grab metrics from wifi_server sessions
-                for session_id, session in list(self.wifi_server.sessions.items()):
-                    bytes_received = session.get("bytes_received", 0)
-                    total_size = session.get("total_size", 0)
-                    file_name = session.get("file_name", "Unknown")
-                    
-                    if total_size > 0:
-                        percent = int((bytes_received / total_size) * 100)
-                        
-                        # Dynamic speed calculation
-                        import time as py_time
-                        now = py_time.time()
-                        last_time = session.get("last_time", now)
-                        last_bytes = session.get("last_bytes", 0)
-                        start_time = session.get("start_time", now)
-                        
-                        dt = now - last_time
-                        prev_speed = session.get("speed_mb", 0.0)
-                        if dt >= 1.0:
-                            db = bytes_received - last_bytes
-                            raw_speed = (db / dt) / (1024 * 1024)
-                            speed = 0.3 * raw_speed + 0.7 * prev_speed
-                            session["last_time"] = now
-                            session["last_bytes"] = bytes_received
-                            session["speed_mb"] = speed
-                        else:
-                            speed = prev_speed if prev_speed > 0 else (((bytes_received / (now - start_time)) / (1024 * 1024)) if (now - start_time) > 0 else 0.0)
-                            
-                        await self.ws_server.broadcast("transfer_stats", {
-                            "state": "TRANSFERRING",
-                            "file_name": file_name,
-                            "progress_percent": percent,
-                            "speed_mb": speed
-                        })
-                
-                await asyncio.sleep(1)
+                await asyncio.sleep(60)
         except asyncio.CancelledError:
             pass
         finally:

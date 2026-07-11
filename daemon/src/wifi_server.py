@@ -182,7 +182,32 @@ class ArcWifiServer:
                         f.write(payload)
                     
                     session["bytes_received"] += len(payload)
-                    
+
+                    # Broadcast inbound progress to panel
+                    if self.daemon and self.daemon.loop and "total_size" in session:
+                        import asyncio
+                        import time as py_time
+                        total = session["total_size"]
+                        received = session["bytes_received"]
+                        percent = int((received / total) * 100) if total > 0 else 0
+                        now = py_time.time()
+                        dt = now - session.get("last_time", now)
+                        db = received - session.get("last_bytes", 0)
+                        raw_speed = (db / dt) / (1024 * 1024) if dt > 0 else 0
+                        speed = 0.3 * raw_speed + 0.7 * session.get("current_speed", 0.0)
+                        session["current_speed"] = speed
+                        session["last_time"] = now
+                        session["last_bytes"] = received
+                        asyncio.run_coroutine_threadsafe(
+                            self.daemon.ws_server.broadcast("transfer_stats", {
+                                "state": "RECEIVING",
+                                "file_name": session.get("file_name", ""),
+                                "progress_percent": percent,
+                                "speed_mb": speed
+                            }),
+                            self.daemon.loop
+                        )
+
                     # If total size reached, finalize file
                     if "total_size" in session and session["bytes_received"] >= session["total_size"]:
                         self.finalize_file(session_id)
@@ -271,10 +296,18 @@ class ArcWifiServer:
         if is_clipboard:
             try:
                 import subprocess
-                cmd = f"[void][System.Reflection.Assembly]::LoadWithPartialName('System.Drawing'); [void][System.Reflection.Assembly]::LoadWithPartialName('System.Windows.Forms'); $img = [System.Drawing.Image]::FromFile('{part_file_path}'); [System.Windows.Forms.Clipboard]::SetImage($img)"
-                subprocess.run(['powershell.exe', '-NoProfile', '-Command', cmd], capture_output=True)
-                logging.info("Synced phone image directly to Windows clipboard.")
-                
+                # Linux: write image to cache and set clipboard via wl-copy
+                cache_dir = os.path.join(os.path.expanduser("~"), ".cache", "arc")
+                os.makedirs(cache_dir, exist_ok=True)
+                img_dest = os.path.join(cache_dir, file_name)
+                os.rename(part_file_path, img_dest)
+                subprocess.Popen(
+                    ['wl-copy', '--type', 'image/png'],
+                    stdin=open(img_dest, 'rb'),
+                    stderr=subprocess.DEVNULL
+                )
+                logging.info("Synced phone image to Linux clipboard.")
+
                 if self.daemon and self.daemon.db:
                     self.daemon.db.insert_clipboard("RCVD: CLIPBOARD IMAGE", is_file=True)
                     if self.daemon.loop:
@@ -289,20 +322,15 @@ class ArcWifiServer:
                             self.daemon.loop
                         )
             except Exception as e:
-                logging.error(f"Failed to copy synced image to Windows clipboard: {e}")
-            
-            try:
-                if os.path.exists(part_file_path):
-                    os.remove(part_file_path)
-            except Exception as e:
-                logging.error(f"Failed to clean up temp clipboard image: {e}")
-                
+                logging.error(f"Failed to copy synced image to Linux clipboard: {e}")
+
             if session_id in self.sessions:
                 del self.sessions[session_id]
             return
-                
+
         # Move file to storage
         base, extension = os.path.splitext(file_name)
+        dest_path = os.path.join(self.storage_dir, file_name)
         counter = 1
         logging.info(f"Checking destination path availability: {dest_path}")
         while os.path.exists(dest_path):
@@ -319,6 +347,19 @@ class ArcWifiServer:
         except Exception as e:
             logging.error(f"Rename failed: {e}")
         
+        # Broadcast completion to panel
+        if self.daemon and self.daemon.loop:
+            import asyncio
+            asyncio.run_coroutine_threadsafe(
+                self.daemon.ws_server.broadcast("transfer_stats", {
+                    "state": "COMPLETED",
+                    "file_name": file_name,
+                    "progress_percent": 100,
+                    "speed_mb": 0.0
+                }),
+                self.daemon.loop
+            )
+
         # Cleanup session
         if session_id in self.sessions:
             del self.sessions[session_id]

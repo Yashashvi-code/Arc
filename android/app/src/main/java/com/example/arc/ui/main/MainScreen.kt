@@ -104,7 +104,7 @@ fun MainScreen(
     // Load saved settings
     val prefs = remember { context.getSharedPreferences("arc_prefs", Context.MODE_PRIVATE) }
     LaunchedEffect(Unit) {
-        hostIp = prefs.getString("host_ip", "10.0.2.2") ?: "10.0.2.2"
+        hostIp = prefs.getString("host_ip", "") ?: ""
         port = prefs.getString("port", "59152") ?: "59152"
     }
 
@@ -164,17 +164,14 @@ fun MainScreen(
         contract = ActivityResultContracts.GetContent()
     ) { uri: Uri? ->
         if (uri != null) {
-            prefs.edit().apply {
-                putString("host_ip", hostIp)
-                putString("port", port)
-                apply()
-            }
+            val activeHost = prefs.getString("host_ip", hostIp) ?: hostIp
+            val activePort = prefs.getString("port", port)?.toIntOrNull() ?: 59152
 
             val intent = Intent(context, ArcForegroundService::class.java).apply {
                 action = ArcForegroundService.ACTION_START_TRANSFER
                 putExtra(ArcForegroundService.EXTRA_FILE_URI, uri.toString())
-                putExtra(ArcForegroundService.EXTRA_HOST, hostIp)
-                putExtra(ArcForegroundService.EXTRA_PORT, port.toIntOrNull() ?: 59152)
+                putExtra(ArcForegroundService.EXTRA_HOST, activeHost)
+                putExtra(ArcForegroundService.EXTRA_PORT, activePort)
             }
 
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {

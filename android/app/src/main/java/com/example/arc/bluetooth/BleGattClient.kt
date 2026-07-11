@@ -22,6 +22,7 @@ class BleGattClient(
     interface BleListener {
         fun onConnectionStateChange(connected: Boolean)
         fun onClipboardReceived(text: String)
+        fun onPcIpReceived(ip: String)
         fun onError(message: String)
     }
 
@@ -31,6 +32,7 @@ class BleGattClient(
         val SERVICE_UUID: UUID = UUID.fromString("4564ea7d-1c3c-44ef-a28a-7e61405e3201")
         val COORDINATES_CHAR_UUID: UUID = UUID.fromString("4564ea7d-1c3c-44ef-a28a-7e61405e3202")
         val CLIPBOARD_CHAR_UUID: UUID = UUID.fromString("4564ea7d-1c3c-44ef-a28a-7e61405e3203")
+        val PC_IP_CHAR_UUID: UUID = UUID.fromString("4564ea7d-1c3c-44ef-a28a-7e61405e3204")
         
         // Client Characteristic Configuration Descriptor (CCCD) UUID
         val CCCD_UUID: UUID = UUID.fromString("00002902-0000-1000-8000-00805f9b34fb")
@@ -119,7 +121,6 @@ class BleGattClient(
             if (newState == BluetoothProfile.STATE_CONNECTED) {
                 Log.i(TAG, "Connected to GATT Server. Starting service discovery...")
                 isConnected = true
-                listener.onConnectionStateChange(true)
                 // Add a small delay for stable service discovery on older/Samsung platforms
                 handler.postDelayed({
                     bluetoothGatt?.discoverServices()
@@ -171,6 +172,10 @@ class BleGattClient(
                     val text = it.value?.toString(Charsets.UTF_8) ?: ""
                     Log.i(TAG, "Clipboard notification received: ${text.take(30)}...")
                     listener.onClipboardReceived(text)
+                } else if (it.uuid == PC_IP_CHAR_UUID) {
+                    val ip = it.value?.toString(Charsets.UTF_8) ?: ""
+                    Log.i(TAG, "PC IP received via BLE: $ip")
+                    listener.onPcIpReceived(ip)
                 }
             }
         }
@@ -191,19 +196,20 @@ class BleGattClient(
             .build()
 
         val settings = ScanSettings.Builder()
-            .setScanMode(ScanSettings.SCAN_MODE_LOW_LATENCY)
+            .setScanMode(ScanSettings.SCAN_MODE_BALANCED)
             .build()
 
         Log.i(TAG, "Scanning for GATT Server: $SERVICE_UUID...")
         adapter.bluetoothLeScanner?.startScan(listOf(filter), settings, scanCallback)
         
-        // Timeout scan after 30 seconds to conserve battery
+        // Timeout scan — auto retry instead of giving up
         handler.postDelayed({
             if (isScanning) {
                 stopScan()
-                listener.onError("Pairing scan timed out.")
+                Log.i(TAG, "Scan timed out. Auto-retrying in 3s...")
+                handler.postDelayed({ startScan() }, 3000)
             }
-        }, 30000)
+        }, 60000)
     }
 
     fun stopScan() {
@@ -227,6 +233,22 @@ class BleGattClient(
         gatt.setCharacteristicNotification(char, true)
 
         // 2. Write Notification Descriptor to remote GATT Server (CCCD)
+        val desc = char.getDescriptor(CCCD_UUID)
+        if (desc != null) {
+            enqueue(BleOperation.WriteDesc(desc, BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE))
+        }
+
+        // 3. Subscribe to PC IP notifications
+        setupPcIpNotifications()
+        // 4. Services ready — notify listener and auto-write coordinates
+        listener.onConnectionStateChange(true)
+    }
+
+    private fun setupPcIpNotifications() {
+        val gatt = bluetoothGatt ?: return
+        val service = gatt.getService(SERVICE_UUID) ?: return
+        val char = service.getCharacteristic(PC_IP_CHAR_UUID) ?: return
+        gatt.setCharacteristicNotification(char, true)
         val desc = char.getDescriptor(CCCD_UUID)
         if (desc != null) {
             enqueue(BleOperation.WriteDesc(desc, BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE))

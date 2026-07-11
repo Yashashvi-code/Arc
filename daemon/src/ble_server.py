@@ -11,6 +11,7 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(me
 SERVICE_UUID = "4564ea7d-1c3c-44ef-a28a-7e61405e3201"
 COORDINATES_CHAR_UUID = "4564ea7d-1c3c-44ef-a28a-7e61405e3202"
 CLIPBOARD_CHAR_UUID = "4564ea7d-1c3c-44ef-a28a-7e61405e3203"
+PC_IP_CHAR_UUID = "4564ea7d-1c3c-44ef-a28a-7e61405e3204"
 
 BLE_AVAILABLE = False
 try:
@@ -107,7 +108,20 @@ class ArcBleServer:
                 clip_permissions
             )
 
-            # 4. Start advertising
+            # 4. Add PC IP Characteristic (Read + Notify)
+            pc_ip_flags = (
+                GATTCharacteristicProperties.read |
+                GATTCharacteristicProperties.notify
+            )
+            pc_ip_permissions = GATTAttributePermissions.readable
+            await self.server.add_new_characteristic(
+                SERVICE_UUID,
+                PC_IP_CHAR_UUID,
+                pc_ip_flags,
+                None,
+                pc_ip_permissions
+            )
+            # 5. Start advertising
             await self.server.start()
             self.is_running = True
             logging.info("BLE GATT server advertising as 'arc-bridge-daemon'.")
@@ -115,6 +129,18 @@ class ArcBleServer:
             logging.error(f"Failed to start BLE GATT server: {e}")
             logging.info("Falling back to Mock BLE mode.")
             self.is_running = True
+
+    async def notify_pc_ip(self, ip: str):
+        try:
+            if not self.is_running or not self.server:
+                return
+            char = self.server.get_characteristic(PC_IP_CHAR_UUID)
+            if char:
+                char.value = ip.encode('utf-8')
+                self.server.update_value(SERVICE_UUID, PC_IP_CHAR_UUID)
+                logging.info(f"BLE PC IP notification sent: {ip}")
+        except Exception as e:
+            logging.error(f"Failed to notify PC IP: {e}")
 
     async def notify_clipboard_change(self, text: str):
         if not self.is_running:
