@@ -7,7 +7,10 @@ from datetime import datetime, timedelta
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 
 class ArcDatabase:
-    def __init__(self, db_path="D:/arc/daemon/storage/arc.db"):
+    def __init__(self, db_path=None):
+        if db_path is None:
+            import os
+            db_path = os.path.join(os.path.expanduser("~"), "Arc", "daemon", "storage", "arc.db")
         self.db_path = db_path
         os.makedirs(os.path.dirname(self.db_path), exist_ok=True)
         self._init_db()

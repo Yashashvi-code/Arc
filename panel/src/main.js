@@ -56,7 +56,7 @@ function connect() {
     currentSpeed = 0.0;
     currentTransferState = "IDLE";
     
-    setTimeout(connect, 2000);
+    setTimeout(connect, 500);
   };
 
   socket.onerror = (err) => {
@@ -108,7 +108,13 @@ function handleEvent(event, data) {
       if (currentTransferState === "TRANSFERRING") {
         progressStatusLabel.textContent = `SENDING: ${(data.file_name || "FILE").toUpperCase()}`;
         progressStatusLabel.style.color = "var(--text-primary)";
-        progressSpeedLabel.textContent = `${currentSpeed.toFixed(1)} MB/S`;
+        progressSpeedLabel.textContent = currentSpeed > 0 ? `${currentSpeed.toFixed(1)} MB/S` : "MEASURING...";
+        progressBar.style.width = `${currentProgress}%`;
+        progressBar.classList.add("alive");
+      } else if (currentTransferState === "RECEIVING") {
+        progressStatusLabel.textContent = `RECEIVING: ${(data.file_name || "FILE").toUpperCase()}`;
+        progressStatusLabel.style.color = "var(--accent-lime)";
+        progressSpeedLabel.textContent = currentSpeed > 0 ? `${currentSpeed.toFixed(1)} MB/S` : "MEASURING...";
         progressBar.style.width = `${currentProgress}%`;
         progressBar.classList.add("alive");
       } else if (currentTransferState === "CONNECTING") {
@@ -117,9 +123,14 @@ function handleEvent(event, data) {
         progressSpeedLabel.textContent = "";
         progressBar.style.width = "0%";
         progressBar.classList.add("alive");
-      } else if (currentTransferState === "COMPLETED") {
-        progressStatusLabel.textContent = "UPLOAD SUCCESS";
+      } else if (currentTransferState === "SENT") {
+        progressStatusLabel.textContent = `SENT: ${(data.file_name || "FILE").toUpperCase()}`;
         progressStatusLabel.style.color = "var(--accent-green)";
+        progressSpeedLabel.textContent = "";
+        progressBar.style.width = "100%";
+      } else if (currentTransferState === "COMPLETED") {
+        progressStatusLabel.textContent = `RECEIVED: ${(data.file_name || "FILE").toUpperCase()}`;
+        progressStatusLabel.style.color = "var(--accent-lime)";
         progressSpeedLabel.textContent = "";
         progressBar.style.width = "100%";
         progressBar.classList.remove("alive");
@@ -265,19 +276,48 @@ window.addEventListener("DOMContentLoaded", () => {
     });
   });
 
-  // 2. Theme Switch handler (Corrected labels: displays alternative target theme)
+  // 2. Theme Switch handler — defaults to system preference, user override saved
   if (themeBtn) {
-    themeBtn.textContent = "[ LIGHT ]"; // Default starting in dark mode
+    const body = document.body;
+    const savedTheme = localStorage.getItem("arc-theme");
+    const systemDark = window.matchMedia("(prefers-color-scheme: dark)").matches;
+    const startDark = savedTheme ? savedTheme === "dark" : systemDark;
+
+    if (startDark) {
+      body.classList.add("dark-theme");
+      body.classList.remove("light-theme");
+      themeBtn.textContent = "[ LIGHT ]";
+    } else {
+      body.classList.add("light-theme");
+      body.classList.remove("dark-theme");
+      themeBtn.textContent = "[ DARK ]";
+    }
+
+    window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", (e) => {
+      if (!localStorage.getItem("arc-theme")) {
+        if (e.matches) {
+          body.classList.add("dark-theme");
+          body.classList.remove("light-theme");
+          themeBtn.textContent = "[ LIGHT ]";
+        } else {
+          body.classList.add("light-theme");
+          body.classList.remove("dark-theme");
+          themeBtn.textContent = "[ DARK ]";
+        }
+      }
+    });
+
     themeBtn.addEventListener("click", () => {
-      const body = document.body;
       if (body.classList.contains("dark-theme")) {
         body.classList.remove("dark-theme");
         body.classList.add("light-theme");
         themeBtn.textContent = "[ DARK ]";
+        localStorage.setItem("arc-theme", "light");
       } else {
         body.classList.remove("light-theme");
         body.classList.add("dark-theme");
         themeBtn.textContent = "[ LIGHT ]";
+        localStorage.setItem("arc-theme", "dark");
       }
     });
   }
@@ -316,12 +356,23 @@ window.addEventListener("DOMContentLoaded", () => {
     });
   }
 
-  // 5. Send File to phone handler (Native OS dialog)
+  // 5. Send File to phone handler (Native Tauri dialog)
   if (sendFileBtn) {
-    sendFileBtn.addEventListener("click", () => {
-      if (socket && socket.readyState === WebSocket.OPEN) {
-        console.log("Requesting native file dialog from daemon...");
-        socket.send(JSON.stringify({ action: "open_file_dialog" }));
+    sendFileBtn.addEventListener("click", async () => {
+      try {
+        const selected = await window.__TAURI__.core.invoke("plugin:dialog|open", {
+          multiple: false,
+          title: "Select File to Send to Phone",
+          defaultPath: window.__TAURI__ ? undefined : undefined
+        });
+        if (selected && socket && socket.readyState === WebSocket.OPEN) {
+          socket.send(JSON.stringify({ action: "send_file_path", payload: { file_path: selected } }));
+        }
+      } catch (e) {
+        // Fallback to daemon tkinter dialog
+        if (socket && socket.readyState === WebSocket.OPEN) {
+          socket.send(JSON.stringify({ action: "open_file_dialog" }));
+        }
       }
     });
   }

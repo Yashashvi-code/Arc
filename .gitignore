@@ -1,28 +1,31 @@
-# Python Caches & Temp
+# Python virtual environment
+.venv/
+
+# Python cache
 __pycache__/
-*.py[cod]
-*$py.class
-daemon/temp/
-*.part
+*.pyc
+*.pyo
 
-# Android Build Outputs & Gradle Caches
-.gradle/
-build/
-app/build/
-local.properties
-*.apk
-*.ap_
-*.dex
-*.class
-.cxx/
-.externalNativeBuild/
+# Database files
+*.db
+*.db-shm
+*.db-wal
 
-# Tauri Node Modules & Build Targets
-node_modules/
+# Build artifacts
 panel/src-tauri/target/
-panel/dist/
-.tauri/
+panel/node_modules/
+/mnt/extra/arc-panel/
+/mnt/extra/arc-target/
+*.AppImage
 
-# OS-specific files
-.DS_Store
-Thumbs.db
+# Android build
+android/local.properties
+android/app/build/
+android/.gradle/
+android/build/
+
+# Windows artifacts
+D:/
+
+# Icons generated locally
+arc.png

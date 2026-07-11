@@ -143,6 +143,14 @@ class ArcForegroundService : Service() {
                 }
             }
 
+            override fun onPcIpReceived(ip: String) {
+                Log.i(TAG, "Laptop IP received via BLE: $ip — saving to prefs")
+                val prefs = getSharedPreferences("arc_prefs", MODE_PRIVATE)
+                prefs.edit().putString("host_ip", ip).putString("port", "59152").apply()
+                transferState.value = transferState.value.copy(
+                    bleLog = "Ecosystem paired. Laptop IP: $ip"
+                )
+            }
             override fun onError(message: String) {
                 Log.e(TAG, "BLE Client Error: $message")
                 transferState.value = transferState.value.copy(bleLog = "BLE Error: $message")
@@ -548,7 +556,7 @@ class ArcForegroundService : Service() {
                             sessionId = sessionId
                         )
                         updateNotification("Ecosystem bridge connected.", 0, 0L)
-                        val compNotification = buildNotification("Transfer completed!", 100, 100L, isOngoing = false)
+                        val compNotification = buildNotification("Received: ${getFileName(fileUri)}", 100, 100L, isOngoing = false)
                         notificationManager?.notify(COMPLETED_NOTIFICATION_ID, compNotification)
                         resetSyncState()
                     }

@@ -43,23 +43,59 @@ class ArcClipboard:
 
     def check_and_save_clipboard_image(self):
         system = platform.system()
-        if system != "Windows":
+        if system != "Linux":
             return None
         try:
-            process = subprocess.Popen(
-                ['powershell.exe', '-NoProfile', '-Command', 'Add-Type -AssemblyName System.Windows.Forms; [System.Windows.Forms.Clipboard]::ContainsImage()'],
+            # Check if clipboard contains an image via wl-paste (Wayland)
+            result = subprocess.run(
+                ['wl-paste', '--list-types'],
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
                 text=True
             )
-            stdout, _ = process.communicate()
-            if "True" in stdout:
-                temp_dir = os.environ.get("TEMP", os.path.expanduser("~"))
-                img_path = os.path.join(temp_dir, "arc_clip_img.png")
-                cmd = f"$img = Get-Clipboard -Format Image; if ($img) {{$img.Save('{img_path}', [System.Drawing.Imaging.ImageFormat]::Png)}}"
-                subprocess.run(['powershell.exe', '-NoProfile', '-Command', cmd], capture_output=True)
-                if os.path.exists(img_path) and os.path.getsize(img_path) > 0:
-                    return img_path
+            mime_types = result.stdout.strip().split('\n')
+            image_type = next((t for t in mime_types if t.startswith('image/')), None)
+            if not image_type:
+                # Fallback: try xclip for X11
+                result = subprocess.run(
+                    ['xclip', '-selection', 'clipboard', '-t', 'TARGETS', '-o'],
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    text=True
+                )
+                if 'image/png' in result.stdout:
+                    image_type = 'image/png'
+            if image_type:
+                cache_dir = os.path.join(os.path.expanduser("~"), ".cache", "arc")
+                os.makedirs(cache_dir, exist_ok=True)
+                img_path = os.path.join(cache_dir, "arc_clip_img.png")
+                # Try Wayland first
+                try:
+                    result = subprocess.run(
+                        ['wl-paste', '--type', image_type],
+                        stdout=subprocess.PIPE,
+                        stderr=subprocess.PIPE,
+                        start_new_session=True
+                    )
+                    if result.returncode == 0 and len(result.stdout) > 0:
+                        with open(img_path, 'wb') as f:
+                            f.write(result.stdout)
+                        return img_path
+                except Exception:
+                    pass
+                # Fallback to xclip
+                try:
+                    result = subprocess.run(
+                        ['xclip', '-selection', 'clipboard', '-t', 'image/png', '-o'],
+                        stdout=subprocess.PIPE,
+                        stderr=subprocess.PIPE
+                    )
+                    if result.returncode == 0 and len(result.stdout) > 0:
+                        with open(img_path, 'wb') as f:
+                            f.write(result.stdout)
+                        return img_path
+                except Exception:
+                    pass
         except Exception as e:
             logging.error(f"Failed to check/save clipboard image: {e}")
         return None
@@ -81,6 +117,10 @@ class ArcClipboard:
         # Avoid writing duplicate to prevent loops
         if text == self.get_content():
             return True
+        
+        # Set last_content BEFORE writing to clipboard
+        # so wl-paste --watch doesn't echo it back as a new change
+        self.last_content = text
 
         system = platform.system()
         logging.info(f"Setting clipboard content: {text[:30]}...")
@@ -120,15 +160,43 @@ class ArcClipboard:
         
         system = platform.system()
         if system == "Linux":
-            # For Wayland, wl-paste --watch is very efficient and event-driven.
-            # We will start a thread that executes the watch loop.
             self.monitor_thread = Thread(target=self._run_linux_watch, daemon=True)
+            self.image_thread = Thread(target=self._run_image_poll, daemon=True)
+            self.monitor_thread.start()
+            self.image_thread.start()
         else:
-            # Fallback to polling for Windows/other systems
             self.monitor_thread = Thread(target=self._run_polling_watch, daemon=True)
+            self.monitor_thread.start()
             
-        self.monitor_thread.start()
         logging.info("Clipboard monitoring started.")
+
+    def _run_image_poll(self):
+        """Separate polling loop for image clipboard detection on Wayland."""
+        last_image_path = None
+        while self.running:
+            try:
+                result = subprocess.run(
+                    ['wl-paste', '--list-types'],
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.DEVNULL,
+                    text=True,
+                    start_new_session=True
+                )
+                mime_types = result.stdout.strip().split('\n')
+                image_type = next((t for t in mime_types if t.startswith('image/')), None)
+                if image_type:
+                    img_path = self.check_and_save_clipboard_image()
+                    if img_path and img_path != last_image_path:
+                        last_image_path = img_path
+                        size = os.path.getsize(img_path)
+                        ref = f"FILE_PATH:{img_path}:{size}"
+                        if ref != self.last_content:
+                            self._handle_change(ref)
+                else:
+                    last_image_path = None
+            except Exception as e:
+                logging.error(f"Image poll error: {e}")
+            time.sleep(8.0)
 
     def stop_monitoring(self):
         self.running = False
@@ -145,20 +213,23 @@ class ArcClipboard:
             time.sleep(0.5)
 
     def _run_linux_watch(self):
-        # We can monitor by reading stdout lines of wl-paste -w
-        # Alternatively, we can use a polling loop as fallback if wl-paste is not available,
-        # but wl-paste --watch is preferred on Wayland.
         try:
-            # Run wl-paste --watch in a subprocess and stream changes
-            # Wait, wl-paste --watch doesn't stream text directly, it runs a command.
-            # However, clipman or other tools do.
-            # If we run: wl-paste --watch python daemon/src/clipboard.py --on-change,
-            # that requires parsing arguments.
-            # A simpler, fully self-contained way in Python that works on Wayland:
-            # Poll every 0.3 seconds using wl-paste. It has extremely low overhead.
-            self._run_polling_watch()
+            proc = subprocess.Popen(
+                ['wl-paste', '--watch', 'cat'],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.DEVNULL,
+                text=True
+            )
+            for line in proc.stdout:
+                if not self.running:
+                    proc.terminate()
+                    break
+                content = line.strip()
+                if content and content != self.last_content:
+                    self._handle_change(content)
         except Exception as e:
             logging.error(f"Error in Linux watch: {e}")
+            self._run_polling_watch()
 
     def _handle_change(self, text):
         self.last_content = text
