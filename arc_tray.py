@@ -8,9 +8,11 @@ from PIL import Image, ImageDraw
 # Force pystray to use GTK backend (Wayland compatible)
 os.environ.setdefault("PYSTRAY_BACKEND", "gtk")
 
-DAEMON_PATH = os.path.expanduser("~/Arc/daemon/src/main.py")
-PANEL_PATH = "/mnt/extra/arc-panel/AppRun"
-PYTHON_PATH = os.path.expanduser("~/Arc/.venv/bin/python3")
+# Resolve paths relative to this script's location
+SCRIPT_DIR = os.path.dirname(os.path.realpath(__file__))
+DAEMON_PATH = os.path.join(SCRIPT_DIR, "daemon", "src", "main.py")
+PANEL_PATH = os.path.join(os.path.expanduser("~"), ".local", "share", "arc", "panel", "AppRun")
+PYTHON_PATH = os.path.join(SCRIPT_DIR, ".venv", "bin", "python3")
 
 daemon_proc = None
 panel_proc = None
