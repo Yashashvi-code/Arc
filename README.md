@@ -124,9 +124,27 @@ source ~/.bashrc
 sudo apt install adb
 ```
 
-5. Install the Arc APK:
+5. Build and install the Arc APK:
 ```bash
-adb install android/app/build/outputs/apk/debug/app-debug.apk
+# Install Java if needed
+sudo apt install openjdk-17-jdk
+
+# Create local SDK config
+echo "sdk.dir=$HOME/.local/share/android-sdk" > android/local.properties
+
+# Install Android SDK command line tools
+mkdir -p $HOME/.local/share/android-sdk
+wget -q https://dl.google.com/android/repository/commandlinetools-linux-11076708_latest.zip -O /tmp/cmdtools.zip
+unzip -q /tmp/cmdtools.zip -d /tmp/cmdtools
+mkdir -p $HOME/.local/share/android-sdk/cmdline-tools/latest
+mv /tmp/cmdtools/cmdline-tools/* $HOME/.local/share/android-sdk/cmdline-tools/latest/
+$HOME/.local/share/android-sdk/cmdline-tools/latest/bin/sdkmanager --licenses
+$HOME/.local/share/android-sdk/cmdline-tools/latest/bin/sdkmanager "platform-tools" "platforms;android-36" "build-tools;35.0.0"
+
+# Build and install
+cd android && chmod +x gradlew && ./gradlew assembleDebug
+adb install app/build/outputs/apk/debug/app-debug.apk
+cd ..
 ```
 
 > If you get a signature mismatch error (upgrading from a previous install):
