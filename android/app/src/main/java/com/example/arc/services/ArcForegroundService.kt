@@ -704,23 +704,81 @@ class ArcForegroundService : Service() {
 
     private fun pingLaptop(host: String, port: Int) {
         Thread {
+            var socket: java.net.Socket? = null
             try {
-                Log.i(TAG, "Pinging laptop Wi-Fi server at $host:$port to pair coordinates...")
-                val socket = java.net.Socket()
-                socket.connect(java.net.InetSocketAddress(host, port), 2500)
-                socket.close()
-                handler.post {
-                    android.widget.Toast.makeText(applicationContext, "Ecosystem Sync Success! Coordinates paired.", android.widget.Toast.LENGTH_SHORT).show()
+                Log.i(TAG, "Initiating secure Wi-Fi pairing request to $host:$port...")
+                socket = java.net.Socket()
+                // Wait up to 30s to allow the user to click Approve on the PC dialog
+                socket.connect(java.net.InetSocketAddress(host, port), 30000)
+                
+                // Create 81-byte pairing request header
+                val magic = byteArrayOf('A'.code.toByte(), 'R'.code.toByte(), 'C'.code.toByte(), 1)
+                val type = 0x05.toByte() // PAIR_REQUEST
+                val tokenBytes = ByteArray(16) // Empty for pairing request
+                val sessionUuidBytes = ByteArray(16) // Empty for pairing request
+                val checksum = ByteArray(32) // Empty for pairing request
+                
+                val header = ByteBuffer.allocate(81).apply {
+                    put(magic)
+                    put(type)
+                    put(tokenBytes)
+                    put(sessionUuidBytes)
+                    putLong(0L) // chunk_idx
+                    putInt(0) // payload_len = 0
+                    put(checksum)
+                }.array()
+                
+                // Write pairing request header
+                socket.getOutputStream().write(header)
+                socket.getOutputStream().flush()
+                
+                // Read response (expected 32-byte hex token or "REJECTED")
+                val responseBuffer = ByteArray(32)
+                val readBytes = socket.getInputStream().read(responseBuffer)
+                if (readBytes > 0) {
+                    val responseStr = String(responseBuffer, 0, readBytes, Charsets.UTF_8).trim()
+                    if (responseStr == "REJECTED") {
+                        handler.post {
+                            android.widget.Toast.makeText(applicationContext, "Ecosystem Sync Rejected by Laptop.", android.widget.Toast.LENGTH_LONG).show()
+                        }
+                        transferState.value = transferState.value.copy(
+                            isWifiConnected = false,
+                            bleLog = "Pairing rejected by laptop."
+                        )
+                    } else if (responseStr.length == 32) {
+                        // Success! Save received auth token in shared preferences
+                        val prefs = getSharedPreferences("arc_prefs", MODE_PRIVATE)
+                        prefs.edit().apply {
+                            putString("host_ip", host)
+                            putString("port", "59152")
+                            putString("auth_token", responseStr)
+                            apply()
+                        }
+                        
+                        handler.post {
+                            android.widget.Toast.makeText(applicationContext, "Ecosystem Sync Success! Coordinates paired.", android.widget.Toast.LENGTH_SHORT).show()
+                        }
+                        transferState.value = transferState.value.copy(
+                            isWifiConnected = true,
+                            bleLog = "Ecosystem paired via Wi-Fi link."
+                        )
+                    } else {
+                        handler.post {
+                            android.widget.Toast.makeText(applicationContext, "Ecosystem Sync Failed: Invalid handshake response.", android.widget.Toast.LENGTH_SHORT).show()
+                        }
+                    }
+                } else {
+                    handler.post {
+                        android.widget.Toast.makeText(applicationContext, "Ecosystem Sync Failed: No response from laptop.", android.widget.Toast.LENGTH_SHORT).show()
+                    }
                 }
-                transferState.value = transferState.value.copy(
-                    isWifiConnected = true,
-                    bleLog = "Ecosystem paired via Wi-Fi link."
-                )
             } catch (e: Exception) {
-                Log.e(TAG, "Ecosystem sync ping failed: ${e.message}")
+                Log.e(TAG, "Ecosystem sync pairing failed: ${e.message}")
                 handler.post {
                     android.widget.Toast.makeText(applicationContext, "Sync Failed: ${e.message}", android.widget.Toast.LENGTH_SHORT).show()
                 }
+            } finally {
+                try { socket?.close() } catch (ex: Exception) {}
             }
         }.start()
     }
