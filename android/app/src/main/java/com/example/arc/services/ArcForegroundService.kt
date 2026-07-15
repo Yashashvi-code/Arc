@@ -481,6 +481,27 @@ class ArcForegroundService : Service() {
             outputStream?.flush()
             outputStream?.close()
             outputStream = null
+
+            // Validate integrity hash if expectedFileHash is provided
+            if (destFile != null && expectedFileHash.isNotEmpty()) {
+                Log.i(TAG, "Verifying file integrity for $fileName...")
+                val digest = MessageDigest.getInstance("SHA-256")
+                val buffer = ByteArray(8192)
+                var bytesRead: Int
+                destFile.inputStream().use { fileInput ->
+                    while (fileInput.read(buffer).also { bytesRead = it } != -1) {
+                        digest.update(buffer, 0, bytesRead)
+                    }
+                }
+                val calculatedHash = digest.digest().joinToString("") { "%02x".format(it) }
+                Log.i(TAG, "Calculated file hash: $calculatedHash, expected: $expectedFileHash")
+                if (!calculatedHash.equals(expectedFileHash, ignoreCase = true)) {
+                    Log.e(TAG, "Integrity check failed! Deleting corrupted file.")
+                    destFile.delete()
+                    throw Exception("Integrity check failed: hash mismatch")
+                }
+                Log.i(TAG, "Integrity check passed successfully!")
+            }
             
             if (isClipboard) {
                 val mainHandler = android.os.Handler(android.os.Looper.getMainLooper())
