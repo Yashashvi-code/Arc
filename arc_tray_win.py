@@ -123,6 +123,9 @@ def make_icon():
     return img
 
 def main():
+    import logging
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
+    
     threading.Thread(target=start_processes, daemon=True).start()
     
     menu = pystray.Menu(
@@ -132,14 +135,20 @@ def main():
     
     icon = pystray.Icon("Arc", make_icon(), "Arc Ecosystem Link", menu)
     
-    # Run the tray icon loop in a background thread so the main thread remains
-    # responsive to KeyboardInterrupt (Ctrl+C) signals in Windows PowerShell
     icon_thread = threading.Thread(target=icon.run, daemon=True)
     icon_thread.start()
     
     try:
+        # Give processes initial startup time
+        time.sleep(5)
         while True:
-            time.sleep(1)
+            time.sleep(0.5)
+            # If the user closed the main panel window, shut down the daemon and quit tray
+            if panel_proc and panel_proc.poll() is not None:
+                logging.info("Main panel closed. Shutting down all background services cleanly...")
+                stop_processes()
+                icon.stop()
+                break
     except KeyboardInterrupt:
         print("\n[INFO] KeyboardInterrupt received. Terminating processes and exiting...")
         stop_processes()

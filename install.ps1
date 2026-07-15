@@ -33,8 +33,8 @@ if (Test-Path $BuiltExe) {
     Write-Host "[WARNING] Could not locate compiled panel.exe. Development fallback will be used." -ForegroundColor Yellow
 }
 
-# 4. Create Start Menu & Startup Shortcuts
-Write-Host "[4/5] Creating Start Menu & Windows Startup shortcuts..." -ForegroundColor Cyan
+# 4. Create Start Menu Shortcut (No startup/boot shortcut)
+Write-Host "[4/5] Creating Start Menu shortcut..." -ForegroundColor Cyan
 $WshShell = New-Object -ComObject WScript.Shell
 
 # Start Menu Shortcut
@@ -50,18 +50,12 @@ $Shortcut.Description = "Arc Local Ecosystem Link Bridge"
 $Shortcut.Save()
 Write-Host "Start Menu shortcut created at: $StartMenuPath" -ForegroundColor Green
 
-# Startup folder Shortcut (Launches silently on system boot)
+# Remove any existing startup boot shortcut
 $StartupPath = "$env:APPDATA\Microsoft\Windows\Start Menu\Programs\Startup\Arc.lnk"
-$ShortcutStartup = $WshShell.CreateShortcut($StartupPath)
-$ShortcutStartup.TargetPath = "$TargetDir\.venv\Scripts\pythonw.exe"
-$ShortcutStartup.Arguments = """$TargetDir\arc_tray_win.py"""
-$ShortcutStartup.WorkingDirectory = $TargetDir
-if (Test-Path "$TargetDir\panel.exe") {
-    $ShortcutStartup.IconLocation = "$TargetDir\panel.exe,0"
+if (Test-Path $StartupPath) {
+    Remove-Item -Path $StartupPath -Force
+    Write-Host "Removed legacy boot shortcut from Startup folder." -ForegroundColor Yellow
 }
-$ShortcutStartup.Description = "Arc Local Ecosystem Link Bridge"
-$ShortcutStartup.Save()
-Write-Host "Startup folder shortcut created at: $StartupPath" -ForegroundColor Green
 
 # 5. Launch Arc Tray App
 Write-Host "[5/5] Launching Arc in the background..." -ForegroundColor Cyan
