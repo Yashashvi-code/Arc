@@ -323,6 +323,7 @@ class ArcForegroundService : Service() {
             var speedBps = 0.0
             
             var expectedFileHash = ""
+            var lastNotificationTime = 0L
             
             while (isServerRunning) {
                 // Read 81-byte header
@@ -360,6 +361,10 @@ class ArcForegroundService : Service() {
                 sessionId = sessionUuid.toString()
                 
                 val payloadLen = ByteBuffer.wrap(header.copyOfRange(45, 49)).int
+                if (payloadLen > 32 * 1024 * 1024 || payloadLen < 0) {
+                    Log.e(TAG, "Payload size $payloadLen exceeds limit of 32MB or is invalid. Aborting connection.")
+                    break
+                }
                 
                 // Read payload bytes
                 val payload = ByteArray(payloadLen)
@@ -459,7 +464,11 @@ class ArcForegroundService : Service() {
                         totalBytes = totalSize,
                         speedBps = speedBps
                     )
-                    updateNotification("Downloading... $percent% (${fileName})", percent, totalSize)
+                    
+                    if (now - lastNotificationTime >= 1000L || bytesReceived >= totalSize) {
+                        updateNotification("Downloading... $percent% (${fileName})", percent, totalSize)
+                        lastNotificationTime = now
+                    }
                     
                     if (bytesReceived >= totalSize && expectedFileHash.isNotEmpty()) {
                         Log.i(TAG, "File drop complete: $fileName (metadata hash mode)")
@@ -555,6 +564,7 @@ class ArcForegroundService : Service() {
         val prefs = getSharedPreferences("arc_prefs", Context.MODE_PRIVATE)
         val authToken = prefs.getString("auth_token", "") ?: ""
         serviceScope.launch {
+            var lastNotificationTime = 0L
             TcpClient.sendFile(
                 contentResolver = contentResolver,
                 fileUri = fileUri,
@@ -577,7 +587,11 @@ class ArcForegroundService : Service() {
                             sessionId = sessionId
                         )
 
-                        updateNotification(text, progressPercent, totalBytes)
+                        val now = System.currentTimeMillis()
+                        if (now - lastNotificationTime >= 1000L || bytesSent >= totalBytes) {
+                            updateNotification(text, progressPercent, totalBytes)
+                            lastNotificationTime = now
+                        }
                     }
 
                     override fun onError(message: String) {

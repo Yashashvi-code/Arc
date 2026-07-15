@@ -66,14 +66,13 @@
           <div class="status-btn" id="send-file-btn" style="margin-top: 15px;">[ CHOOSE FILE ]</div>
         </div>
 
-        <!-- Minimal Progress Deck (Always Visible & Adaptive) -->
-        <div class="progress-deck">
-          <div class="progress-status">
-            <span id="progress-status-label">READY</span>
-            <span id="progress-speed-label"></span>
+        <!-- Active Transfer Queue Dashboard -->
+        <div class="queue-panel">
+          <div class="queue-header">
+            <div class="section-label">ACTIVE NETWORK DROPS</div>
           </div>
-          <div class="progress-track">
-            <div class="progress-bar" id="progress-bar"></div>
+          <div class="queue-list" id="queue-list">
+            <div class="queue-empty-state">No active transfers. Drop a file above to begin.</div>
           </div>
         </div>
         
@@ -154,6 +153,18 @@
       </section>
 
     </main>
+  </div>
+
+  <!-- Pairing Approval Modal Overlay -->
+  <div class="modal-overlay" id="pairing-modal" style="display: none;">
+    <div class="modal-card">
+      <div class="modal-header">PAIR NEW DEVICE?</div>
+      <p class="modal-desc">Incoming pairing request from phone at <span id="pairing-ip-label" style="color: var(--accent-green);">...</span>. Allow this device to sync clipboard and drop files?</p>
+      <div class="modal-actions">
+        <div class="status-btn" id="pairing-approve-btn" style="color: var(--accent-green); border-color: var(--accent-green);">[ APPROVE ]</div>
+        <div class="status-btn" id="pairing-reject-btn" style="color: red; border-color: red;">[ REJECT ]</div>
+      </div>
+    </div>
   </div>
 
   <script src="main.js"></script>

@@ -23,6 +23,9 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.drawWithCache
+import androidx.compose.ui.graphics.PointMode
+import androidx.core.content.ContextCompat
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
@@ -60,6 +63,53 @@ private val IP_PATTERN = Pattern.compile(
 
 data class RecentDrop(val fileName: String, val timestamp: String, val size: String, val success: Boolean)
 
+// Helper methods for persistent transfer history serialization
+private fun formatSize(bytes: Long): String {
+    if (bytes <= 0) return "0 B"
+    val units = arrayOf("B", "KB", "MB", "GB")
+    val digitGroups = (Math.log10(bytes.toDouble()) / Math.log10(1024.0)).toInt()
+    val groupVal = if (digitGroups < units.size) digitGroups else units.size - 1
+    return String.format(java.util.Locale.US, "%.1f %s", bytes / Math.pow(1024.0, groupVal.toDouble()), units[groupVal])
+}
+
+private fun saveHistory(context: Context, list: List<RecentDrop>) {
+    val prefs = context.getSharedPreferences("arc_prefs", Context.MODE_PRIVATE)
+    val array = org.json.JSONArray()
+    for (item in list) {
+        val obj = org.json.JSONObject().apply {
+            put("fileName", item.fileName)
+            put("timestamp", item.timestamp)
+            put("size", item.size)
+            put("success", item.success)
+        }
+        array.put(obj)
+    }
+    prefs.edit().putString("transfer_history_json", array.toString()).apply()
+}
+
+private fun loadHistory(context: Context): List<RecentDrop> {
+    val prefs = context.getSharedPreferences("arc_prefs", Context.MODE_PRIVATE)
+    val jsonStr = prefs.getString("transfer_history_json", null) ?: return emptyList()
+    val list = ArrayList<RecentDrop>()
+    try {
+        val array = org.json.JSONArray(jsonStr)
+        for (i in 0 until array.length()) {
+            val obj = array.getJSONObject(i)
+            list.add(
+                RecentDrop(
+                    fileName = obj.getString("fileName"),
+                    timestamp = obj.getString("timestamp"),
+                    size = obj.getString("size"),
+                    success = obj.getBoolean("success")
+                )
+            )
+        }
+    } catch (e: Exception) {
+        android.util.Log.e("MainScreen", "Failed to parse history JSON", e)
+    }
+    return list
+}
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun MainScreen(
@@ -73,7 +123,6 @@ fun MainScreen(
     var port by remember { mutableStateOf("59152") }
     var customTextToSend by remember { mutableStateOf("") }
 
-    // Clean initial history (no mock files)
     val recentDrops = remember {
         mutableStateListOf<RecentDrop>()
     }
@@ -81,9 +130,28 @@ fun MainScreen(
     // Capture completion of transfers in current session and append them to history
     LaunchedEffect(progressState.state) {
         if (progressState.state == TransferState.COMPLETED && progressState.fileName.isNotEmpty()) {
-            recentDrops.add(0, RecentDrop(progressState.fileName.uppercase(), "NOW", "DROP", true))
+            val df = java.text.SimpleDateFormat("HH:mm", java.util.Locale.getDefault())
+            val timeStr = df.format(java.util.Date())
+            val newDrop = RecentDrop(progressState.fileName.uppercase(), timeStr, formatSize(progressState.totalBytes), true)
+            // Prevent duplicate entries for the same session ID
+            if (recentDrops.none { it.fileName == newDrop.fileName && it.timestamp == newDrop.timestamp }) {
+                recentDrops.add(0, newDrop)
+                if (recentDrops.size > 20) {
+                    recentDrops.removeLast()
+                }
+                saveHistory(context, recentDrops)
+            }
         } else if (progressState.state == TransferState.ERROR && progressState.fileName.isNotEmpty()) {
-            recentDrops.add(0, RecentDrop(progressState.fileName.uppercase(), "NOW", "FAIL", false))
+            val df = java.text.SimpleDateFormat("HH:mm", java.util.Locale.getDefault())
+            val timeStr = df.format(java.util.Date())
+            val newDrop = RecentDrop(progressState.fileName.uppercase(), timeStr, "FAIL", false)
+            if (recentDrops.none { it.fileName == newDrop.fileName && it.timestamp == newDrop.timestamp }) {
+                recentDrops.add(0, newDrop)
+                if (recentDrops.size > 20) {
+                    recentDrops.removeLast()
+                }
+                saveHistory(context, recentDrops)
+            }
         }
     }
 
@@ -101,6 +169,10 @@ fun MainScreen(
     val prefs = remember { context.getSharedPreferences("arc_prefs", Context.MODE_PRIVATE) }
     var authToken by remember { mutableStateOf("") }
     LaunchedEffect(Unit) {
+        val loaded = loadHistory(context)
+        recentDrops.clear()
+        recentDrops.addAll(loaded)
+        
         hostIp = prefs.getString("host_ip", "") ?: ""
         port = prefs.getString("port", "59152") ?: "59152"
         authToken = prefs.getString("auth_token", "") ?: ""
@@ -175,7 +247,7 @@ fun MainScreen(
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                 context.startForegroundService(intent)
             } else {
-                context.startService(intent)
+                ContextCompat.startForegroundService(context, intent)
             }
         }
     }
@@ -186,23 +258,26 @@ fun MainScreen(
         modifier = Modifier
             .fillMaxSize()
             .background(bgColor)
-            // GPU-Accelerated Substrate Grid Background drawing (locked 120fps)
-            .drawBehind {
-                val spacing = 8.dp.toPx()
+            // GPU-Accelerated Substrate Grid Background drawing (cached layout & batch points draw call)
+            .drawWithCache {
+                val spacing = 24.dp.toPx()
                 val radius = 1.dp.toPx()
-                
-                var x = 0f
-                while (x < size.width) {
-                    var y = 0f
-                    while (y < size.height) {
-                        drawCircle(
-                            color = dotColor,
-                            radius = radius,
-                            center = Offset(x, y)
-                        )
-                        y += spacing
+                val rows = (size.height / spacing).toInt()
+                val cols = (size.width / spacing).toInt()
+                val points = ArrayList<Offset>()
+                for (r in 0..rows) {
+                    for (c in 0..cols) {
+                        points.add(Offset(c * spacing, r * spacing))
                     }
-                    x += spacing
+                }
+                onDrawBehind {
+                    drawPoints(
+                        points = points,
+                        pointMode = PointMode.Points,
+                        color = dotColor,
+                        strokeWidth = radius * 2,
+                        cap = StrokeCap.Round
+                    )
                 }
             }
             .padding(24.dp)
@@ -233,6 +308,35 @@ fun MainScreen(
                     letterSpacing = 2.sp,
                     modifier = Modifier.padding(bottom = 24.dp)
                 )
+
+                // 0. Onboarding Guide Banner (When Unpaired)
+                if (!progressState.isBleConnected && !progressState.isWifiConnected) {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(bottom = 16.dp)
+                            .border(1.dp, ACCENT_GREEN, RoundedCornerShape(16.dp))
+                            .background(cardColor.copy(alpha = 0.5f), RoundedCornerShape(16.dp))
+                            .padding(16.dp)
+                    ) {
+                        Text(
+                            text = "SYSTEM UNPAIRED",
+                            color = ACCENT_GREEN,
+                            fontSize = 11.sp,
+                            fontFamily = FontFamily.Monospace,
+                            fontWeight = FontWeight.Bold,
+                            letterSpacing = 1.sp
+                        )
+                        Spacer(modifier = Modifier.height(4.dp))
+                        Text(
+                            text = "Tap PAIR below to connect over Bluetooth, or expand MANUAL COORDINATES to enter your PC's IP address and security token.",
+                            color = textSecondary,
+                            fontSize = 10.sp,
+                            fontFamily = FontFamily.SansSerif,
+                            lineHeight = 14.sp
+                        )
+                    }
+                }
 
                 // 1. Ecosystem Link Card
                 Column(
@@ -339,7 +443,7 @@ fun MainScreen(
                                 val intent = Intent(context, ArcForegroundService::class.java).apply {
                                     action = ArcForegroundService.ACTION_STOP_BLE
                                 }
-                                context.startService(intent)
+                                ContextCompat.startForegroundService(context, intent)
                             },
                             enabled = progressState.isBleConnected || progressState.isWifiConnected || progressState.bleLog.contains("Scanning"),
                             shape = RoundedCornerShape(12.dp),
@@ -394,7 +498,7 @@ fun MainScreen(
                                         action = ArcForegroundService.ACTION_SEND_CLIPBOARD
                                         putExtra(ArcForegroundService.EXTRA_CLIPBOARD_TEXT, text)
                                     }
-                                    context.startService(intent)
+                                    ContextCompat.startForegroundService(context, intent)
                                     Toast.makeText(context, "System Clipboard pushed.", Toast.LENGTH_SHORT).show()
                                 } else {
                                     Toast.makeText(context, "Clipboard is empty.", Toast.LENGTH_SHORT).show()
@@ -452,7 +556,7 @@ fun MainScreen(
                                     action = ArcForegroundService.ACTION_SEND_CLIPBOARD
                                     putExtra(ArcForegroundService.EXTRA_CLIPBOARD_TEXT, customTextToSend)
                                 }
-                                context.startService(intent)
+                                ContextCompat.startForegroundService(context, intent)
                                 customTextToSend = ""
                                 Toast.makeText(context, "Custom Text pushed.", Toast.LENGTH_SHORT).show()
                             }
@@ -472,6 +576,68 @@ fun MainScreen(
                             fontSize = 11.sp,
                             fontFamily = FontFamily.Monospace,
                             fontWeight = FontWeight.Bold
+                        )
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(16.dp))
+
+                // 2.5 Ecosystem Preferences Card
+                var autoClipboardSync by remember {
+                    mutableStateOf(prefs.getBoolean("auto_clipboard_sync", false))
+                }
+
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .border(1.dp, borderColor, RoundedCornerShape(20.dp))
+                        .background(cardColor, RoundedCornerShape(20.dp))
+                        .padding(20.dp)
+                ) {
+                    Text(
+                        text = "ECOSYSTEM PREFERENCES",
+                        color = textSecondary,
+                        fontSize = 9.sp,
+                        fontFamily = FontFamily.SansSerif,
+                        fontWeight = FontWeight.Bold,
+                        letterSpacing = 1.5.sp,
+                        modifier = Modifier.padding(bottom = 14.dp)
+                    )
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = "AUTO-SYNC CLIPBOARD",
+                                color = textPrimary,
+                                fontSize = 11.sp,
+                                fontFamily = FontFamily.Monospace,
+                                fontWeight = FontWeight.Bold
+                            )
+                            Spacer(modifier = Modifier.height(2.dp))
+                            Text(
+                                text = "Pushes clipboard automatically on app focus",
+                                color = textSecondary,
+                                fontSize = 9.sp,
+                                fontFamily = FontFamily.SansSerif
+                            )
+                        }
+                        
+                        Switch(
+                            checked = autoClipboardSync,
+                            onCheckedChange = { isChecked ->
+                                autoClipboardSync = isChecked
+                                prefs.edit().putBoolean("auto_clipboard_sync", isChecked).apply()
+                            },
+                            colors = SwitchDefaults.colors(
+                                checkedThumbColor = Color.Black,
+                                checkedTrackColor = ACCENT_GREEN,
+                                uncheckedThumbColor = textSecondary,
+                                uncheckedTrackColor = cardColor
+                            )
                         )
                     }
                 }
@@ -591,7 +757,7 @@ fun MainScreen(
                                     putExtra(ArcForegroundService.EXTRA_HOST, hostIp)
                                     putExtra(ArcForegroundService.EXTRA_PORT, port.toIntOrNull() ?: 59152)
                                 }
-                                context.startService(intent)
+                                ContextCompat.startForegroundService(context, intent)
                             },
                             enabled = isIpValid,
                             colors = ButtonDefaults.buttonColors(

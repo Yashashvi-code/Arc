@@ -102,12 +102,52 @@ class ArcWsServer:
                                 "error": "No phone connected. Sync phone coordinates first."
                             })
                             
+                    elif action == "approve_pairing":
+                        ip = payload.get("ip")
+                        if self.daemon and self.daemon.wifi_server:
+                            self.daemon.wifi_server.approve_pairing(ip)
+                            
+                    elif action == "reject_pairing":
+                        ip = payload.get("ip")
+                        if self.daemon and self.daemon.wifi_server:
+                            self.daemon.wifi_server.reject_pairing(ip)
+                            
                     elif action == "send_file_path":
                         # Support both flat and nested payload structures
                         file_path = payload.get("file_path") or (payload.get("payload") or {}).get("file_path")
                         phone_host = getattr(self.daemon, "phone_host", None)
                         if file_path and os.path.exists(file_path) and phone_host:
-                            logging.info(f"Initiating transfer of drag-dropped path: {file_path}")
+                            if os.path.isdir(file_path):
+                                logging.info(f"Path is a directory. Zipping on the fly: {file_path}")
+                                import shutil
+                                current_dir = os.path.dirname(os.path.abspath(__file__))
+                                repo_dir = os.path.dirname(current_dir)
+                                temp_dir = os.path.join(repo_dir, "temp")
+                                if not os.path.exists(temp_dir):
+                                    os.makedirs(temp_dir)
+                                
+                                folder_name = os.path.basename(file_path)
+                                if not folder_name:
+                                    folder_name = os.path.basename(os.path.dirname(file_path))
+                                if not folder_name:
+                                    folder_name = "folder"
+                                    
+                                zip_base = os.path.join(temp_dir, folder_name)
+                                try:
+                                    file_path = shutil.make_archive(zip_base, 'zip', file_path)
+                                    logging.info(f"Successfully zipped folder to {file_path}")
+                                except Exception as zip_err:
+                                    logging.error(f"Failed to zip folder: {zip_err}")
+                                    await self.broadcast("transfer_stats", {
+                                        "state": "ERROR",
+                                        "file_name": folder_name,
+                                        "progress_percent": 0,
+                                        "speed_mb": 0.0,
+                                        "error": f"Folder zipping failed: {str(zip_err)}"
+                                    })
+                                    continue
+                            
+                            logging.info(f"Initiating transfer of path: {file_path}")
                             asyncio.create_task(
                                 self.async_send_to_phone(file_path, phone_host)
                             )
@@ -162,6 +202,8 @@ class ArcWsServer:
 
     def send_file_to_phone(self, file_path, phone_host, is_clipboard=False):
         from wifi_client import ArcWifiClient
+        import uuid
+        session_id = str(uuid.uuid4())
         file_name = os.path.basename(file_path)
         import time as py_time
         start_time = py_time.time()
@@ -189,6 +231,7 @@ class ArcWsServer:
             percent = int((bytes_sent / total_size) * 100)
             asyncio.run_coroutine_threadsafe(
                 self.broadcast("transfer_stats", {
+                    "session_id": session_id,
                     "state": "TRANSFERRING",
                     "file_name": file_name,
                     "progress_percent": percent,
@@ -203,6 +246,7 @@ class ArcWsServer:
         # Broadcast connecting
         asyncio.run_coroutine_threadsafe(
             self.broadcast("transfer_stats", {
+                "session_id": session_id,
                 "state": "CONNECTING",
                 "file_name": file_name,
                 "progress_percent": 0,
@@ -211,11 +255,17 @@ class ArcWsServer:
             self.loop
         )
 
-        success = client.send_file(file_path, progress_callback=on_progress, is_clipboard=is_clipboard)
+        success = client.send_file(
+            file_path,
+            session_id=session_id,
+            progress_callback=on_progress,
+            is_clipboard=is_clipboard
+        )
 
         # Broadcast outcome
         asyncio.run_coroutine_threadsafe(
             self.broadcast("transfer_stats", {
+                "session_id": session_id,
                 "state": "SENT" if success else "ERROR",
                 "file_name": file_name,
                 "progress_percent": 100 if success else 0,
@@ -241,11 +291,37 @@ class ArcWsServer:
         except Exception as e:
             logging.error(f"Failed to remove temp file: {e}")
 
+    async def process_request(self, *args, **kwargs):
+        # Compatible with websockets >= 11.x (connection, request) and websockets < 11.x (path, headers)
+        if len(args) == 2:
+            arg1, arg2 = args
+            if hasattr(arg2, 'headers'):
+                headers = arg2.headers
+            else:
+                headers = arg2
+        else:
+            logging.warning("Unknown process_request arguments structure.")
+            return None
+
+        origin = headers.get("Origin")
+        if origin:
+            # Only allow local Tauri panel app or localhost origin
+            if not (origin.startswith("tauri://") or "localhost" in origin or origin.startswith("http://localhost")):
+                logging.warning(f"Rejecting unauthorized WebSocket Origin: {origin}")
+                import http
+                return http.HTTPStatus.FORBIDDEN, [], b"Forbidden Origin"
+        return None
+
     async def start(self):
         self.loop = asyncio.get_running_loop()
         try:
             import websockets
-            self.server = await websockets.serve(self.handler, self.host, self.port)
+            self.server = await websockets.serve(
+                self.handler, 
+                self.host, 
+                self.port,
+                process_request=self.process_request
+            )
             logging.info(f"WebSocket IPC server running on ws://{self.host}:{self.port}")
         except ImportError:
             logging.error("websockets package not found. Run 'pip install websockets' in daemon environment.")

@@ -11,6 +11,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.ui.Modifier
+import androidx.core.content.ContextCompat
 import com.example.arc.services.ArcForegroundService
 import com.example.arc.theme.ArcTheme
 
@@ -26,6 +27,13 @@ class MainActivity : ComponentActivity() {
 
   override fun onResume() {
     super.onResume()
+    
+    val prefs = getSharedPreferences("arc_prefs", Context.MODE_PRIVATE)
+    val autoSync = prefs.getBoolean("auto_clipboard_sync", false)
+    if (!autoSync) {
+      return
+    }
+
     // Read clipboard when app gets focus (complying with Android 10+ background limits)
     val clipboard = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
     if (clipboard.hasPrimaryClip()) {
@@ -40,11 +48,10 @@ class MainActivity : ComponentActivity() {
             action = ArcForegroundService.ACTION_SEND_CLIPBOARD
             putExtra(ArcForegroundService.EXTRA_CLIPBOARD_TEXT, text)
           }
-          startService(intent)
+          ContextCompat.startForegroundService(this, intent)
         } else if (uri != null) {
           val mimeType = contentResolver.getType(uri)
           if (mimeType != null && mimeType.startsWith("image/")) {
-            val prefs = getSharedPreferences("arc_prefs", Context.MODE_PRIVATE)
             val host = prefs.getString("host_ip", null)
             if (host != null) {
               val intent = Intent(this, ArcForegroundService::class.java).apply {
@@ -53,7 +60,7 @@ class MainActivity : ComponentActivity() {
                 putExtra(ArcForegroundService.EXTRA_HOST, host)
                 putExtra(ArcForegroundService.EXTRA_PORT, prefs.getString("port", "59152")?.toIntOrNull() ?: 59152)
               }
-              startService(intent)
+              ContextCompat.startForegroundService(this, intent)
             }
           }
         }

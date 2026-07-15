@@ -227,6 +227,7 @@ class ArcWifiServer:
                         session["last_bytes"] = received
                         asyncio.run_coroutine_threadsafe(
                             self.daemon.ws_server.broadcast("transfer_stats", {
+                                "session_id": session_id,
                                 "state": "RECEIVING",
                                 "file_name": session.get("file_name", ""),
                                 "progress_percent": percent,
@@ -368,9 +369,33 @@ class ArcWifiServer:
                 logging.info(f"Calculated file hash: {calc_hash}")
                 if calc_hash != expected_hash:
                     logging.error(f"Integrity check failed! Expected hash: {expected_hash}, calculated: {calc_hash}")
+                    if self.daemon and self.daemon.loop:
+                        asyncio.run_coroutine_threadsafe(
+                            self.daemon.ws_server.broadcast("transfer_stats", {
+                                "session_id": session_id,
+                                "state": "ERROR",
+                                "file_name": file_name,
+                                "progress_percent": 0,
+                                "speed_mb": 0.0,
+                                "error": "Integrity check failed"
+                            }),
+                            self.daemon.loop
+                        )
                     return
             except Exception as e:
                 logging.error(f"Failed to verify integrity hash: {e}")
+                if self.daemon and self.daemon.loop:
+                    asyncio.run_coroutine_threadsafe(
+                        self.daemon.ws_server.broadcast("transfer_stats", {
+                            "session_id": session_id,
+                            "state": "ERROR",
+                            "file_name": file_name,
+                            "progress_percent": 0,
+                            "speed_mb": 0.0,
+                            "error": f"Integrity check exception: {str(e)}"
+                        }),
+                        self.daemon.loop
+                    )
                 return
                 
         if is_clipboard:
@@ -453,6 +478,7 @@ class ArcWifiServer:
             import asyncio
             asyncio.run_coroutine_threadsafe(
                 self.daemon.ws_server.broadcast("transfer_stats", {
+                    "session_id": session_id,
                     "state": "COMPLETED",
                     "file_name": file_name,
                     "progress_percent": 100,
