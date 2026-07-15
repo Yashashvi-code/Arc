@@ -322,6 +322,8 @@ class ArcForegroundService : Service() {
             var startTime = System.currentTimeMillis()
             var speedBps = 0.0
             
+            var expectedFileHash = ""
+            
             while (isServerRunning) {
                 // Read 81-byte header
                 val header = ByteArray(81)
@@ -373,8 +375,9 @@ class ArcForegroundService : Service() {
                     }
                     totalSize = json.getLong("total_size")
                     isClipboard = json.optBoolean("is_clipboard", false)
+                    expectedFileHash = json.optString("file_hash", "")
                     
-                    Log.i(TAG, "Inbound file drop metadata: $fileName ($totalSize bytes, is_clip=$isClipboard)")
+                    Log.i(TAG, "Inbound file drop metadata: $fileName ($totalSize bytes, expected_hash='$expectedFileHash', is_clip=$isClipboard)")
                     
                     val destDir = if (isClipboard) cacheDir else {
                         val publicDownloadDir = android.os.Environment.getExternalStoragePublicDirectory(android.os.Environment.DIRECTORY_DOWNLOADS)
@@ -425,6 +428,12 @@ class ArcForegroundService : Service() {
                     )
                     break
                 }
+                else if (type == 0x06) { // HASH_VERIFY
+                    val receivedHash = String(payload, Charsets.UTF_8).trim()
+                    Log.i(TAG, "Received final SHA-256 hash for verification: $receivedHash")
+                    expectedFileHash = receivedHash
+                    break
+                }
                 else if (type == 0x02) { // DATA
                     outputStream?.write(payload)
                     bytesReceived += payloadLen
@@ -452,8 +461,8 @@ class ArcForegroundService : Service() {
                     )
                     updateNotification("Downloading... $percent% (${fileName})", percent, totalSize)
                     
-                    if (bytesReceived >= totalSize) {
-                        Log.i(TAG, "File drop complete: $fileName")
+                    if (bytesReceived >= totalSize && expectedFileHash.isNotEmpty()) {
+                        Log.i(TAG, "File drop complete: $fileName (metadata hash mode)")
                         break
                     }
                 }

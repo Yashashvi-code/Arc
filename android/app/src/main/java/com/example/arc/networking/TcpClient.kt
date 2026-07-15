@@ -123,20 +123,16 @@ object TcpClient {
             val (fileName, fileSize) = getFileMetadata(contentResolver, fileUri)
             Log.i(TAG, "Starting transfer for $fileName ($fileSize bytes) to $host:$port")
 
-            Log.i(TAG, "Calculating file hash...")
-            val fileHash = calculateFileSha256(contentResolver, fileUri)
-            Log.i(TAG, "File hash: $fileHash")
-
             // Connect
             socket.connect(InetSocketAddress(host, port), 5000)
             val outputStream = socket.getOutputStream()
             val inputStream = socket.getInputStream()
 
-            // 1. Send Metadata
+            // 1. Send Metadata (empty file_hash signals incremental hashing mode)
             val metadataJson = JSONObject().apply {
                 put("file_name", fileName)
                 put("total_size", fileSize)
-                put("file_hash", fileHash)
+                put("file_hash", "")
             }
             val metadataBytes = metadataJson.toString().toByteArray(Charsets.UTF_8)
             val metadataHeader = makeHeader(TYPE_METADATA, sessionId, 0L, metadataBytes, authToken)
@@ -158,6 +154,23 @@ object TcpClient {
             val offset = ByteBuffer.wrap(offsetBytes).long
             Log.i(TAG, "Server requested resume offset: $offset bytes")
 
+            // Initialize message digest for incremental hashing
+            val digest = MessageDigest.getInstance("SHA-256")
+            if (offset > 0) {
+                Log.i(TAG, "Resuming session: Seeding hash generator with first $offset bytes...")
+                contentResolver.openInputStream(fileUri)?.use { seedInput ->
+                    val seedBuffer = ByteArray(65536)
+                    var seeded = 0L
+                    while (seeded < offset) {
+                        val toRead = minOf(65536L, offset - seeded).toInt()
+                        val bytesRead = seedInput.read(seedBuffer, 0, toRead)
+                        if (bytesRead == -1) break
+                        digest.update(seedBuffer, 0, bytesRead)
+                        seeded += bytesRead
+                    }
+                }
+            }
+
             // 2. Stream chunks
             input = contentResolver.openInputStream(fileUri) ?: throw Exception("Failed to open file input stream.")
             if (offset > 0) {
@@ -177,6 +190,10 @@ object TcpClient {
                 if (bytesRead == -1) break
 
                 val payload = if (bytesRead == chunkSize) buffer else buffer.copyOf(bytesRead)
+                
+                // Update hash digest
+                digest.update(payload)
+                
                 val chunkHeader = makeHeader(TYPE_DATA, sessionId, chunkIdx, payload, authToken)
 
                 outputStream.write(chunkHeader)
@@ -198,6 +215,16 @@ object TcpClient {
                     lastReportBytes = bytesSent
                 }
             }
+
+            // 3. Send final verification hash packet (0x06)
+            val finalHash = digest.digest().joinToString("") { "%02x".format(it) }
+            Log.i(TAG, "Sending final verification hash: $finalHash")
+            val hashPayload = finalHash.toByteArray(Charsets.UTF_8)
+            val hashHeader = makeHeader(0x06.toByte(), sessionId, 0L, hashPayload, authToken)
+            
+            outputStream.write(hashHeader)
+            outputStream.write(hashPayload)
+            outputStream.flush()
 
             Log.i(TAG, "Finished streaming data. Closing connection.")
             listener.onComplete()

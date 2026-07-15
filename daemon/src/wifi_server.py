@@ -25,10 +25,13 @@ class ArcWifiServer:
         self.temp_dir = temp_dir or os.path.join(str(Path.home()), ".arc", "temp")
         self.daemon = daemon
         self.sessions = {}  # session_id (uuid) -> metadata dict
+        self.pairing_requests = {}  # client_ip -> (client_socket, threading.Event)
+        import threading
+        self.requests_lock = threading.Lock()
         
         os.makedirs(self.storage_dir, exist_ok=True)
         os.makedirs(self.temp_dir, exist_ok=True)
-
+ 
     def parse_header(self, header_bytes):
         if len(header_bytes) != HEADER_SIZE:
             return None
@@ -41,8 +44,8 @@ class ArcWifiServer:
         p_type = header_bytes[4]
         token_bytes = header_bytes[5:21]
         
-        # Verify auth token if running as daemon
-        if self.daemon and hasattr(self.daemon, "db"):
+        # Verify auth token if running as daemon (bypass for pairing requests)
+        if p_type != 0x05 and self.daemon and hasattr(self.daemon, "db"):
             expected_token = self.daemon.db.get_auth_token()
             expected_bytes = bytes.fromhex(expected_token)
             if token_bytes != expected_bytes:
@@ -81,7 +84,13 @@ class ArcWifiServer:
                 if self.daemon:
                     self.daemon.phone_host = client_address[0]
                     logging.info(f"Auto-paired phone IP coordinates: {client_address[0]}")
-                self.handle_client(client_socket)
+                
+                import threading
+                threading.Thread(
+                    target=self.handle_client,
+                    args=(client_socket,),
+                    daemon=True
+                ).start()
         except KeyboardInterrupt:
             logging.info("Shutting down server.")
         finally:
@@ -226,10 +235,11 @@ class ArcWifiServer:
                             self.daemon.loop
                         )
 
-                    # If total size reached, finalize file
+                    # If total size reached and we already have the hash (legacy mode), finalize
                     if "total_size" in session and session["bytes_received"] >= session["total_size"]:
-                        self.finalize_file(session_id)
-                        break
+                        if session.get("file_hash"):
+                            self.finalize_file(session_id)
+                            break
 
                 elif header["type"] == 0x04: # CLIPBOARD
                     payload = self.receive_all(client_socket, header["payload_len"])
@@ -264,6 +274,58 @@ class ArcWifiServer:
                                 self.daemon.ws_server.broadcast("clipboard_update", text),
                                 self.daemon.loop
                             )
+                    break
+
+                elif header["type"] == 0x05:  # PAIR_REQUEST
+                    import threading
+                    client_ip = client_socket.getpeername()[0]
+                    logging.info(f"Incoming Wi-Fi pairing request from {client_ip}")
+                    
+                    event = threading.Event()
+                    with self.requests_lock:
+                        self.pairing_requests[client_ip] = (client_socket, event)
+                    
+                    if self.daemon and self.daemon.loop:
+                        import asyncio
+                        asyncio.run_coroutine_threadsafe(
+                            self.daemon.ws_server.broadcast("pairing_request", {"ip": client_ip}),
+                            self.daemon.loop
+                        )
+                        
+                    # Wait up to 30 seconds for user approval in panel
+                    approved = event.wait(timeout=30.0)
+                    if not approved:
+                        logging.warning(f"Pairing request from {client_ip} timed out or was rejected.")
+                        try:
+                            client_socket.sendall(b"REJECTED")
+                        except Exception:
+                            pass
+                    
+                    with self.requests_lock:
+                        if client_ip in self.pairing_requests:
+                            del self.pairing_requests[client_ip]
+                    break
+
+                elif header["type"] == 0x06:  # HASH_VERIFY
+                    session = self.sessions.get(session_id)
+                    if not session:
+                        break
+                        
+                    payload = self.receive_all(client_socket, header["payload_len"])
+                    if not payload:
+                        break
+                        
+                    # Verify payload checksum
+                    calc_checksum = hashlib.sha256(payload).digest()
+                    if calc_checksum != header["checksum"]:
+                        logging.error("Hash verify packet checksum mismatch!")
+                        break
+                        
+                    file_hash = payload.decode('utf-8')
+                    session["file_hash"] = file_hash
+                    logging.info(f"Verification hash received for session {session_id}: {file_hash}")
+                    
+                    self.finalize_file(session_id)
                     break
 
                 elif header["type"] == TYPE_CANCEL:
@@ -403,6 +465,38 @@ class ArcWifiServer:
         if session_id in self.sessions:
             del self.sessions[session_id]
             logging.info(f"Cleaned up session {session_id} state.")
+
+    def approve_pairing(self, ip):
+        with self.requests_lock:
+            if ip in self.pairing_requests:
+                client_socket, event = self.pairing_requests[ip]
+                try:
+                    auth_token = self.daemon.db.get_auth_token()
+                    # Send auth token (32 bytes) back to phone
+                    client_socket.sendall(auth_token.encode('utf-8'))
+                    logging.info(f"Pairing request approved for {ip}. Sent auth token.")
+                    # Set phone host IP coordinates
+                    self.daemon.phone_host = ip
+                    if hasattr(self.daemon, 'loop') and self.daemon.loop:
+                        import asyncio
+                        asyncio.run_coroutine_threadsafe(
+                            self.daemon.ws_server.broadcast("pairing_status", {"connected": True, "ip": ip, "strength": "[ |||| ]"}),
+                            self.daemon.loop
+                        )
+                except Exception as e:
+                    logging.error(f"Failed to send pairing token: {e}")
+                event.set()
+
+    def reject_pairing(self, ip):
+        with self.requests_lock:
+            if ip in self.pairing_requests:
+                client_socket, event = self.pairing_requests[ip]
+                try:
+                    client_socket.sendall(b"REJECTED")
+                    logging.info(f"Pairing request rejected for {ip}.")
+                except Exception:
+                    pass
+                event.set()
 
 if __name__ == "__main__":
     server = ArcWifiServer()

@@ -48,14 +48,6 @@ class ArcWifiClient:
 
         file_name = os.path.basename(file_path)
         total_size = os.path.getsize(file_path)
-        
-        # Calculate full file SHA-256
-        logging.info("Calculating file checksum...")
-        sha256 = hashlib.sha256()
-        with open(file_path, "rb") as f:
-            while chunk := f.read(8192):
-                sha256.update(chunk)
-        file_hash = sha256.hexdigest()
 
         if not session_id:
             session_id = str(uuid.uuid4())
@@ -73,11 +65,11 @@ class ArcWifiClient:
             return False
 
         try:
-            # 1. Send Metadata
+            # 1. Send Metadata (send empty file_hash to signal incremental hashing mode)
             metadata = {
                 "file_name": file_name,
                 "total_size": total_size,
-                "file_hash": file_hash,
+                "file_hash": "",
                 "is_clipboard": is_clipboard
             }
             metadata_bytes = json.dumps(metadata).encode('utf-8')
@@ -94,6 +86,20 @@ class ArcWifiClient:
                 
             offset = struct.unpack("!Q", response_bytes)[0]
             logging.info(f"Server returned resume offset: {offset} bytes")
+            
+            # Initialize incremental hash
+            sha256 = hashlib.sha256()
+            if offset > 0:
+                logging.info(f"Resuming session: Seeding hash generator with first {offset} bytes...")
+                with open(file_path, "rb") as f_seed:
+                    bytes_seeded = 0
+                    while bytes_seeded < offset:
+                        to_read = min(65536, offset - bytes_seeded)
+                        seed_chunk = f_seed.read(to_read)
+                        if not seed_chunk:
+                            break
+                        sha256.update(seed_chunk)
+                        bytes_seeded += len(seed_chunk)
             
             # 2. Stream Data Chunks
             bytes_sent = offset
@@ -112,7 +118,10 @@ class ArcWifiClient:
                     payload = f.read(self.chunk_size)
                     if not payload:
                         break
-                        
+                    
+                    # Update hash
+                    sha256.update(payload)
+                    
                     chunk_header = self.make_header(TYPE_DATA, session_id, chunk_idx, payload)
                     sock.sendall(chunk_header)
                     sock.sendall(payload)
@@ -125,6 +134,14 @@ class ArcWifiClient:
                             pass
                     logging.info(f"Sent chunk {chunk_idx}. Total sent: {bytes_sent}/{total_size} bytes")
                     chunk_idx += 1
+
+            # 3. Send final verification hash packet
+            final_hash = sha256.hexdigest()
+            logging.info(f"Sending final verification hash: {final_hash}")
+            hash_payload = final_hash.encode('utf-8')
+            hash_header = self.make_header(0x06, session_id, 0, hash_payload)
+            sock.sendall(hash_header)
+            sock.sendall(hash_payload)
 
             logging.info("File transfer complete from client side.")
             return True
