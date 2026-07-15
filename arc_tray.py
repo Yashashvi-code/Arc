@@ -54,7 +54,23 @@ def main():
     )
     # ASCII only in title to avoid latin-1 encoding error
     icon = pystray.Icon("Arc", make_icon(), "Arc Link Engine", menu)
-    icon.run()
+    
+    icon_thread = threading.Thread(target=icon.run, daemon=True)
+    icon_thread.start()
+    
+    try:
+        # Give processes initial startup time
+        time.sleep(5)
+        while True:
+            time.sleep(0.5)
+            # If the user closed the main panel window, shut down the daemon and quit tray
+            if panel_proc and panel_proc.poll() is not None:
+                stop_processes()
+                icon.stop()
+                break
+    except KeyboardInterrupt:
+        stop_processes()
+        icon.stop()
 
 if __name__ == "__main__":
     main()

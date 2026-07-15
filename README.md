@@ -53,109 +53,56 @@ Arc bridges your laptop and Android phone over your local network — clipboard 
 
 ## LINUX SETUP
 
-**1. Clone the repo**
+Arc is fully automated on Linux with an installer script:
+
+**1. Clone the repository**
 ```bash
 git clone https://github.com/Yashashvi-code/Arc.git
 cd Arc
 ```
 
-**2. Install system dependencies**
+**2. Run the installer script**
+This will install system libraries, set up your Python virtual environment, build the production Tauri GUI, and create a desktop entry launcher.
 ```bash
-sudo apt update
-sudo apt install python3-full python3-tk wl-clipboard xclip \
-  libwebkit2gtk-4.1-dev build-essential libssl-dev \
-  libgtk-3-dev libayatana-appindicator3-dev librsvg2-dev
+chmod +x install.sh
+./install.sh
 ```
 
-**3. Install Rust** (skip if already installed)
+**3. Launch Arc**
+You can now start Arc from your **Applications Menu / App Drawer (Arc)** or simply run:
 ```bash
-curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
-source $HOME/.cargo/env
+arc
 ```
-
-**4. Redirect Rust build artifacts** (saves root partition space)
-```bash
-echo 'export CARGO_TARGET_DIR=/mnt/extra/arc-target' >> ~/.bashrc
-source ~/.bashrc
-```
-> Change `/mnt/extra/` to any partition with at least 3GB free.
-
-**5. Set up Python environment**
-```bash
-python3 -m venv .venv
-source .venv/bin/activate
-pip install -r daemon/requirements.txt
-```
-
-**6. Build the desktop panel**
-```bash
-cd panel
-npm install
-npm run tauri build
-cd ..
-```
-> First build takes 3–5 minutes. Subsequent builds are fast.
-
-**7. Extract the AppImage** (prevents dock pulsating)
-```bash
-APPIMAGE_PATH=$(find /mnt/extra/arc-target/release/bundle/appimage -name "*.AppImage" 2>/dev/null || \
-                find panel/src-tauri/target/release/bundle/appimage -name "*.AppImage" 2>/dev/null)
-"$APPIMAGE_PATH" --appimage-extract 2>/dev/null
-mv squashfs-root /mnt/extra/arc-panel
-```
-
-**8. Open firewall port**
-```bash
-sudo ufw allow 59152/tcp
-```
-
-**9. Add launch alias** (optional but recommended)
-```bash
-echo "alias arc='~/Arc/start.sh'" >> ~/.bashrc
-source ~/.bashrc
-```
+*   **Auto-Exit Lifecycle**: Closing the GUI dashboard window will automatically terminate the background Python daemon and exit the system tray process, freeing 100% of resources.
 
 ---
 
 ## WINDOWS SETUP
 
-**1. Clone the repo**
+Arc is fully automated on Windows with an installer script:
+
+**1. Clone the repository**
 ```powershell
 git clone https://github.com/Yashashvi-code/Arc.git
 cd Arc
 ```
 
-**2. Install Python dependencies**
-```powershell
-pip install -r daemon/requirements.txt
-pip install pystray pillow
-```
-
-**3. Open firewall port**
-
-Run PowerShell **as Administrator**:
+**2. Whitelist Firewall Port**
+Run PowerShell **as Administrator** to allow TCP transfers over your local network:
 ```powershell
 New-NetFirewallRule -DisplayName "Arc Ecosystem" -Direction Inbound -Protocol TCP -LocalPort 59152 -Action Allow
 ```
 
-**4. Build the desktop panel**
+**3. Run the installer script**
+This restores the virtual environment, compiles the production Tauri release panel, creates your Start Menu shortcut, and launches the app.
 ```powershell
-cd panel
-npm install
-npm run tauri build
-cd ..
-```
-> First build takes 3–5 minutes. Rust will be downloaded automatically if needed.
-> The built panel binary will be at `panel\src-tauri\target\release\panel.exe`.
-
-**5. Launch Arc**
-```powershell
-python arc_tray_win.py
+powershell -ExecutionPolicy Bypass -File install.ps1
 ```
 
-A white circle icon with a red dot appears in your **system tray** (bottom-right, near the clock). The Arc daemon starts silently in the background. The desktop panel opens automatically after a few seconds and switches to **ONLINE**.
-
-> **No panel.exe yet?** Arc automatically falls back to launching the panel in development mode (`npm run tauri dev`). The first launch in dev mode takes ~30 seconds to compile — the dashboard will show OFFLINE and then flip to ONLINE once the daemon is connected. This is normal.
+**4. Launch Arc**
+Search for **Arc** in your Start Menu. When executed:
+*   It boots the silent background daemon manager and places the Nothing OS themed icon in your taskbar tray.
+*   **Auto-Exit Lifecycle**: Closing the dashboard window automatically terminates the Python background service and tray process immediately, leaving 0% memory or battery overhead.
 
 ---
 
