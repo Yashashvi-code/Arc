@@ -65,18 +65,19 @@ class ArcDaemon:
             # Synchronize clipboard to phone over Wi-Fi if host is paired
             phone_host = getattr(self, "phone_host", None)
             if phone_host:
+                auth_token = self.db.get_auth_token()
                 if is_file:
                     from wifi_client import ArcWifiClient
                     from threading import Thread
                     def send_wifi_image():
-                        client = ArcWifiClient(host=phone_host, port=59152)
+                        client = ArcWifiClient(host=phone_host, port=59152, auth_token=auth_token)
                         client.send_file(text, is_clipboard=True)
                     Thread(target=send_wifi_image, daemon=True).start()
                 else:
                     from wifi_client import ArcWifiClient
                     from threading import Thread
                     def send_wifi_clipboard():
-                        client = ArcWifiClient(host=phone_host, port=59152)
+                        client = ArcWifiClient(host=phone_host, port=59152, auth_token=auth_token)
                         client.send_clipboard(text)
                     Thread(target=send_wifi_clipboard, daemon=True).start()
 
@@ -95,12 +96,14 @@ class ArcDaemon:
         logging.info(f"IPC Coordinate Sync: Client paired at {host}:{port}")
         self.phone_host = host
         self.phone_port = port
-        # Send laptop IP back to phone over BLE so phone knows where to send files
+        # Send laptop IP and auth token back to phone over BLE so phone knows where to send files and can authenticate
         if hasattr(self, 'loop') and self.loop:
             laptop_ip = self.get_local_ip()
-            logging.info(f"Sending laptop IP to phone: {laptop_ip}")
+            auth_token = self.db.get_auth_token()
+            payload = f"{laptop_ip}|{auth_token}"
+            logging.info(f"Sending laptop IP and auth token to phone: {laptop_ip}")
             asyncio.run_coroutine_threadsafe(
-                self.ble_server.notify_pc_ip(laptop_ip),
+                self.ble_server.notify_pc_ip(payload),
                 self.loop
             )
         # Notify WebSocket UI of new pairing state

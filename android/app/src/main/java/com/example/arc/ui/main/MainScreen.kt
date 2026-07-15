@@ -73,13 +73,9 @@ fun MainScreen(
     var port by remember { mutableStateOf("59152") }
     var customTextToSend by remember { mutableStateOf("") }
 
-    // Mock history of recent drops to make app look alive & functional
+    // Clean initial history (no mock files)
     val recentDrops = remember {
-        mutableStateListOf(
-            RecentDrop("MATHS PBL.PDF", "18:02", "2.4 MB", true),
-            RecentDrop("IMG_8530.PNG", "17:45", "840 KB", true),
-            RecentDrop("DOC_SPECS.TXT", "17:21", "12 KB", false)
-        )
+        mutableStateListOf<RecentDrop>()
     }
 
     // Capture completion of transfers in current session and append them to history
@@ -103,9 +99,11 @@ fun MainScreen(
 
     // Load saved settings
     val prefs = remember { context.getSharedPreferences("arc_prefs", Context.MODE_PRIVATE) }
+    var authToken by remember { mutableStateOf("") }
     LaunchedEffect(Unit) {
         hostIp = prefs.getString("host_ip", "") ?: ""
         port = prefs.getString("port", "59152") ?: "59152"
+        authToken = prefs.getString("auth_token", "") ?: ""
     }
 
     // Permission checks
@@ -554,6 +552,26 @@ fun MainScreen(
                                 focusedContainerColor = Color.Transparent,
                                 unfocusedContainerColor = Color.Transparent
                             ),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(bottom = 8.dp)
+                        )
+
+                        OutlinedTextField(
+                            value = authToken,
+                            onValueChange = { authToken = it },
+                            label = { Text("SECURITY TOKEN", fontFamily = FontFamily.Monospace, fontSize = 11.sp) },
+                            singleLine = true,
+                            colors = OutlinedTextFieldDefaults.colors(
+                                focusedBorderColor = textPrimary,
+                                unfocusedBorderColor = borderColor,
+                                focusedTextColor = textPrimary,
+                                unfocusedTextColor = textPrimary,
+                                focusedLabelColor = textSecondary,
+                                unfocusedLabelColor = textSecondary,
+                                focusedContainerColor = Color.Transparent,
+                                unfocusedContainerColor = Color.Transparent
+                            ),
                             modifier = Modifier.fillMaxWidth()
                         )
 
@@ -565,6 +583,7 @@ fun MainScreen(
                                 prefs.edit().apply {
                                     putString("host_ip", hostIp)
                                     putString("port", port)
+                                    putString("auth_token", authToken)
                                     apply()
                                 }
                                 val intent = Intent(context, ArcForegroundService::class.java).apply {

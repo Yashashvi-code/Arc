@@ -143,10 +143,20 @@ class ArcForegroundService : Service() {
                 }
             }
 
-            override fun onPcIpReceived(ip: String) {
-                Log.i(TAG, "Laptop IP received via BLE: $ip — saving to prefs")
+            override fun onPcIpReceived(ipAndToken: String) {
+                Log.i(TAG, "Laptop IP and token received via BLE: $ipAndToken — saving to prefs")
+                val parts = ipAndToken.split("|")
+                val ip = parts[0]
+                val token = if (parts.size > 1) parts[1] else ""
+                
                 val prefs = getSharedPreferences("arc_prefs", MODE_PRIVATE)
-                prefs.edit().putString("host_ip", ip).putString("port", "59152").apply()
+                prefs.edit().apply {
+                    putString("host_ip", ip)
+                    putString("port", "59152")
+                    putString("auth_token", token)
+                    apply()
+                }
+                
                 transferState.value = transferState.value.copy(
                     bleLog = "Ecosystem paired. Laptop IP: $ip"
                 )
@@ -205,13 +215,14 @@ class ArcForegroundService : Service() {
                     val prefs = getSharedPreferences("arc_prefs", Context.MODE_PRIVATE)
                     val host = prefs.getString("host_ip", null)
                     val port = prefs.getString("port", "59152")?.toIntOrNull() ?: 59152
+                    val authToken = prefs.getString("auth_token", "") ?: ""
                     if (host != null) {
                         Thread {
                             try {
                                 Log.i(TAG, "Syncing clipboard over Wi-Fi to $host:$port")
                                 val socket = Socket(host, port)
                                 
-                                // Create 65-byte header
+                                // Create 81-byte header
                                 val magic = byteArrayOf('A'.code.toByte(), 'R'.code.toByte(), 'C'.code.toByte(), 1)
                                 val type = 0x04.toByte()
                                 val sessionUuid = UUID.randomUUID()
@@ -223,10 +234,12 @@ class ArcForegroundService : Service() {
                                 val payload = text.toByteArray(Charsets.UTF_8)
                                 val payloadLen = payload.size
                                 val checksum = MessageDigest.getInstance("SHA-256").digest(payload)
+                                val tokenBytes = hexStringToByteArray(authToken)
                                 
-                                val header = ByteBuffer.allocate(65).apply {
+                                val header = ByteBuffer.allocate(81).apply {
                                     put(magic)
                                     put(type)
+                                    put(tokenBytes)
                                     put(sessionUuidBytes)
                                     putLong(0L) // chunk_idx
                                     putInt(payloadLen)
@@ -289,6 +302,11 @@ class ArcForegroundService : Service() {
 
     private fun handleIncomingConnection(socket: Socket) {
         Log.i(TAG, "Accepted inbound data connection from ${socket.remoteSocketAddress}")
+        try {
+            socket.soTimeout = 30000
+        } catch (e: Exception) {
+            // ignore
+        }
         val inputStream = socket.getInputStream()
         var outputStream: FileOutputStream? = null
         var destFile: File? = null
@@ -305,8 +323,8 @@ class ArcForegroundService : Service() {
             var speedBps = 0.0
             
             while (isServerRunning) {
-                // Read 65-byte header
-                val header = ByteArray(65)
+                // Read 81-byte header
+                val header = ByteArray(81)
                 try {
                     readFully(inputStream, header)
                 } catch (e: EOFException) {
@@ -322,13 +340,24 @@ class ArcForegroundService : Service() {
                 }
                 
                 val type = header[4].toInt()
+                val tokenBytes = header.copyOfRange(5, 21)
+                
+                // Verify auth token
+                val prefs = getSharedPreferences("arc_prefs", Context.MODE_PRIVATE)
+                val savedToken = prefs.getString("auth_token", "") ?: ""
+                val expectedTokenBytes = hexStringToByteArray(savedToken)
+                if (!tokenBytes.contentEquals(expectedTokenBytes)) {
+                    Log.w(TAG, "Unauthorized TCP connection: token mismatch. Aborting.")
+                    break
+                }
+
                 val sessionUuid = UUID(
-                    ByteBuffer.wrap(header.copyOfRange(5, 13)).long,
-                    ByteBuffer.wrap(header.copyOfRange(13, 21)).long
+                    ByteBuffer.wrap(header.copyOfRange(21, 29)).long,
+                    ByteBuffer.wrap(header.copyOfRange(29, 37)).long
                 )
                 sessionId = sessionUuid.toString()
                 
-                val payloadLen = ByteBuffer.wrap(header.copyOfRange(29, 33)).int
+                val payloadLen = ByteBuffer.wrap(header.copyOfRange(45, 49)).int
                 
                 // Read payload bytes
                 val payload = ByteArray(payloadLen)
@@ -336,7 +365,12 @@ class ArcForegroundService : Service() {
                 
                 if (type == 0x01) { // METADATA
                     val json = JSONObject(String(payload, Charsets.UTF_8))
-                    fileName = json.getString("file_name")
+                    val rawFileName = json.getString("file_name")
+                    // Sanitize filename to prevent path traversal
+                    fileName = File(rawFileName).name
+                    if (fileName.isEmpty() || fileName == "." || fileName == ".." || "/" in rawFileName || "\\" in rawFileName) {
+                        fileName = "safe_transfer"
+                    }
                     totalSize = json.getLong("total_size")
                     isClipboard = json.optBoolean("is_clipboard", false)
                     
@@ -509,12 +543,15 @@ class ArcForegroundService : Service() {
             startForeground(NOTIFICATION_ID, notification)
         }
 
+        val prefs = getSharedPreferences("arc_prefs", Context.MODE_PRIVATE)
+        val authToken = prefs.getString("auth_token", "") ?: ""
         serviceScope.launch {
             TcpClient.sendFile(
                 contentResolver = contentResolver,
                 fileUri = fileUri,
                 host = host,
                 port = port,
+                authToken = authToken,
                 sessionId = sessionId,
                 listener = object : TcpClient.ProgressListener {
                     override fun onProgress(bytesSent: Long, totalBytes: Long, speedBps: Double) {
@@ -693,5 +730,19 @@ class ArcForegroundService : Service() {
         bleClient?.disconnect()
         bleClient = null
         stopReceiverServer()
+    }
+
+    private fun hexStringToByteArray(s: String): ByteArray {
+        val len = s.length
+        if (len != 32) return ByteArray(16)
+        val data = ByteArray(16)
+        try {
+            for (i in 0 until 16) {
+                data[i] = ((Character.digit(s[i * 2], 16) shl 4) + Character.digit(s[i * 2 + 1], 16)).toByte()
+            }
+        } catch (e: Exception) {
+            return ByteArray(16)
+        }
+        return data
     }
 }

@@ -15,7 +15,21 @@ import java.util.UUID
 object TcpClient {
     private const val TAG = "ArcTcpClient"
     private val MAGIC_BYTES = "ARC\u0001".toByteArray(Charsets.US_ASCII)
-    private const val HEADER_SIZE = 65
+    private const val HEADER_SIZE = 81
+
+    private fun hexStringToByteArray(s: String): ByteArray {
+        val len = s.length
+        if (len != 32) return ByteArray(16)
+        val data = ByteArray(16)
+        try {
+            for (i in 0 until 16) {
+                data[i] = ((Character.digit(s[i * 2], 16) shl 4) + Character.digit(s[i * 2 + 1], 16)).toByte()
+            }
+        } catch (e: Exception) {
+            return ByteArray(16)
+        }
+        return data
+    }
 
     private const val TYPE_METADATA: Byte = 0x01
     private const val TYPE_DATA: Byte = 0x02
@@ -65,14 +79,16 @@ object TcpClient {
         return digest.digest().joinToString("") { "%02x".format(it) }
     }
 
-    private fun makeHeader(type: Byte, sessionId: String, chunkIdx: Long, payload: ByteArray): ByteArray {
+    private fun makeHeader(type: Byte, sessionId: String, chunkIdx: Long, payload: ByteArray, authToken: String): ByteArray {
         val sessionBytes = UUID.fromString(sessionId).toBytes()
         val payloadLen = payload.size
         val checksum = sha256(payload)
+        val tokenBytes = hexStringToByteArray(authToken)
 
         val header = ByteBuffer.allocate(HEADER_SIZE)
         header.put(MAGIC_BYTES)
         header.put(type)
+        header.put(tokenBytes)
         header.put(sessionBytes)
         header.putLong(chunkIdx)
         header.putInt(payloadLen)
@@ -96,6 +112,7 @@ object TcpClient {
         fileUri: Uri,
         host: String,
         port: Int,
+        authToken: String = "",
         sessionId: String = UUID.randomUUID().toString(),
         chunkSize: Int = 1024 * 1024,
         listener: ProgressListener
@@ -122,7 +139,7 @@ object TcpClient {
                 put("file_hash", fileHash)
             }
             val metadataBytes = metadataJson.toString().toByteArray(Charsets.UTF_8)
-            val metadataHeader = makeHeader(TYPE_METADATA, sessionId, 0L, metadataBytes)
+            val metadataHeader = makeHeader(TYPE_METADATA, sessionId, 0L, metadataBytes, authToken)
 
             outputStream.write(metadataHeader)
             outputStream.write(metadataBytes)
@@ -160,7 +177,7 @@ object TcpClient {
                 if (bytesRead == -1) break
 
                 val payload = if (bytesRead == chunkSize) buffer else buffer.copyOf(bytesRead)
-                val chunkHeader = makeHeader(TYPE_DATA, sessionId, chunkIdx, payload)
+                val chunkHeader = makeHeader(TYPE_DATA, sessionId, chunkIdx, payload, authToken)
 
                 outputStream.write(chunkHeader)
                 outputStream.write(payload)

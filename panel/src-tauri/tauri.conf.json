@@ -13,6 +13,8 @@
         "title": "arc",
         "width": 720,
         "height": 540,
+        "minWidth": 480,
+        "minHeight": 400,
         "decorations": true,
         "transparent": false,
         "resizable": true,
@@ -20,7 +22,7 @@
       }
     ],
     "security": {
-      "csp": null
+      "csp": "default-src 'self'; connect-src ws://127.0.0.1:59153; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data:"
     }
   },
   "bundle": {

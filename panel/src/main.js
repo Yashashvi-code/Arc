@@ -23,12 +23,14 @@ let socket = null;
 let currentSpeed = 0.0;
 let currentTransferState = "IDLE";
 let currentProgress = 0.0;
+let _reconnectDelay = 500;
 
 function connect() {
   socket = new WebSocket("ws://127.0.0.1:59153");
 
   socket.onopen = () => {
     console.log("WebSocket IPC linked successfully.");
+    _reconnectDelay = 500; // reset backoff on successful connect
     statusLed.classList.add("connected");
     statusText.textContent = "ONLINE";
     if (rssiIndicator) rssiIndicator.textContent = "[ |||| ]";
@@ -44,7 +46,6 @@ function connect() {
   };
 
   socket.onclose = () => {
-    console.log("WebSocket IPC closed. Reconnecting...");
     statusLed.classList.remove("connected");
     statusLed.classList.remove("active");
     statusText.textContent = "OFFLINE";
@@ -56,10 +57,14 @@ function connect() {
     currentSpeed = 0.0;
     currentTransferState = "IDLE";
     
-    setTimeout(connect, 500);
+    // Exponential backoff: 500ms → 1s → 2s → 4s → max 30s
+    const delay = _reconnectDelay;
+    _reconnectDelay = Math.min(_reconnectDelay * 2, 30000);
+    console.log(`WebSocket IPC closed. Reconnecting in ${delay}ms...`);
+    setTimeout(connect, delay);
   };
 
-  socket.onerror = (err) => {
+  socket.onerror = () => {
     socket.close();
   };
 }
@@ -412,10 +417,10 @@ window.addEventListener("DOMContentLoaded", () => {
         if (paths && paths.length > 0 && socket && socket.readyState === WebSocket.OPEN) {
           const filePath = paths[0];
           console.log(`Native file drag-drop received: ${filePath}`);
-          // Send path directly to daemon
+          // Unified payload structure matching file-picker (fixes silent mismatch bug)
           socket.send(JSON.stringify({
             action: "send_file_path",
-            file_path: filePath
+            payload: { file_path: filePath }
           }));
         }
       });

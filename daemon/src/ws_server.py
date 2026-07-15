@@ -45,12 +45,14 @@ class ArcWsServer:
                 return "127.0.0.1"
         
         downloads_path = str(getattr(getattr(self.daemon, "wifi_server", None), "storage_dir", "Downloads"))
+        auth_token = self.db.get_auth_token()
         
         sys_info = {
             "event": "system_info",
             "data": {
                 "pc_ip": get_local_ip(),
-                "downloads_path": downloads_path
+                "downloads_path": downloads_path,
+                "auth_token": auth_token
             }
         }
         await websocket.send(json.dumps(sys_info))
@@ -75,8 +77,11 @@ class ArcWsServer:
                     elif action == "sync_text":
                         text = payload.get("text")
                         if text:
-                            from clipboard import ArcClipboard
-                            ArcClipboard().set_clipboard(text)
+                            if self.daemon and self.daemon.clipboard:
+                                self.daemon.clipboard.set_content(text)
+                            else:
+                                from clipboard import ArcClipboard
+                                ArcClipboard(db=self.db).set_content(text)
                             logging.info(f"Synced text from UI to system clipboard: {text[:30]}...")
                         
                     elif action == "open_file_dialog":
@@ -98,7 +103,8 @@ class ArcWsServer:
                             })
                             
                     elif action == "send_file_path":
-                        file_path = payload.get("file_path")
+                        # Support both flat and nested payload structures
+                        file_path = payload.get("file_path") or (payload.get("payload") or {}).get("file_path")
                         phone_host = getattr(self.daemon, "phone_host", None)
                         if file_path and os.path.exists(file_path) and phone_host:
                             logging.info(f"Initiating transfer of drag-dropped path: {file_path}")
@@ -191,7 +197,8 @@ class ArcWsServer:
                 self.loop
             )
 
-        client = ArcWifiClient(host=phone_host, port=59152)
+        auth_token = self.db.get_auth_token()
+        client = ArcWifiClient(host=phone_host, port=59152, auth_token=auth_token)
         
         # Broadcast connecting
         asyncio.run_coroutine_threadsafe(

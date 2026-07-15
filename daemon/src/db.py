@@ -33,8 +33,46 @@ class ArcDatabase:
                     expires_at DATETIME
                 );
             """)
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS settings (
+                    key TEXT PRIMARY KEY,
+                    value TEXT NOT NULL
+                );
+            """)
             conn.commit()
         logging.info("SQLite database initialized successfully.")
+
+    def get_setting(self, key, default=None):
+        try:
+            with self._get_connection() as conn:
+                cursor = conn.execute("SELECT value FROM settings WHERE key = ?;", (key,))
+                row = cursor.fetchone()
+                return row["value"] if row else default
+        except Exception as e:
+            logging.error(f"Failed to get setting {key}: {e}")
+            return default
+
+    def set_setting(self, key, value):
+        try:
+            with self._get_connection() as conn:
+                conn.execute("""
+                    INSERT INTO settings (key, value) VALUES (?, ?)
+                    ON CONFLICT(key) DO UPDATE SET value = EXCLUDED.value;
+                """, (key, value))
+                conn.commit()
+            return True
+        except Exception as e:
+            logging.error(f"Failed to set setting {key}: {e}")
+            return False
+
+    def get_auth_token(self):
+        token = self.get_setting("auth_token")
+        if not token:
+            import secrets
+            token = secrets.token_hex(16)
+            self.set_setting("auth_token", token)
+            logging.info(f"Generated new security auth token: {token}")
+        return token
 
     def insert_clipboard(self, content, is_file=False, expires_minutes=30):
         if not content.strip():

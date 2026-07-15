@@ -17,6 +17,98 @@ class ArcClipboard:
         self.monitor_thread = None
         self.last_content = self.get_content()
 
+    def _get_win_clipboard_text(self):
+        try:
+            import ctypes
+            from ctypes import wintypes
+            user32 = ctypes.windll.user32
+            kernel32 = ctypes.windll.kernel32
+            
+            # Non-blocking OpenClipboard with retries
+            for _ in range(5):
+                if user32.OpenClipboard(None):
+                    break
+                time.sleep(0.05)
+            else:
+                return None
+                
+            try:
+                CF_UNICODETEXT = 13
+                if user32.IsClipboardFormatAvailable(CF_UNICODETEXT):
+                    h_clip_mem = user32.GetClipboardData(CF_UNICODETEXT)
+                    if h_clip_mem:
+                        p_clip_mem = kernel32.GlobalLock(h_clip_mem)
+                        if p_clip_mem:
+                            text = ctypes.c_wchar_p(p_clip_mem).value
+                            kernel32.GlobalUnlock(h_clip_mem)
+                            return text
+                return ""
+            finally:
+                user32.CloseClipboard()
+        except Exception as e:
+            logging.error(f"Error in native Windows clipboard read: {e}")
+            return None
+
+    def _has_win_clipboard_image(self):
+        try:
+            import ctypes
+            user32 = ctypes.windll.user32
+            for _ in range(5):
+                if user32.OpenClipboard(None):
+                    break
+                time.sleep(0.05)
+            else:
+                return False
+            try:
+                CF_DIB = 8
+                return bool(user32.IsClipboardFormatAvailable(CF_DIB))
+            finally:
+                user32.CloseClipboard()
+        except Exception:
+            return False
+
+    def _set_win_clipboard_text(self, text):
+        try:
+            import ctypes
+            from ctypes import wintypes
+            user32 = ctypes.windll.user32
+            kernel32 = ctypes.windll.kernel32
+            
+            for _ in range(5):
+                if user32.OpenClipboard(None):
+                    break
+                time.sleep(0.05)
+            else:
+                return False
+                
+            try:
+                user32.EmptyClipboard()
+                CF_UNICODETEXT = 13
+                
+                text_bytes = (text + "\0").encode('utf-16le')
+                GMEM_MOVEABLE = 0x0002
+                h_global = kernel32.GlobalAlloc(GMEM_MOVEABLE, len(text_bytes))
+                if not h_global:
+                    return False
+                    
+                p_global = kernel32.GlobalLock(h_global)
+                if not p_global:
+                    kernel32.GlobalFree(h_global)
+                    return False
+                    
+                ctypes.memmove(p_global, text_bytes, len(text_bytes))
+                kernel32.GlobalUnlock(h_global)
+                
+                if not user32.SetClipboardData(CF_UNICODETEXT, h_global):
+                    kernel32.GlobalFree(h_global)
+                    return False
+                return True
+            finally:
+                user32.CloseClipboard()
+        except Exception as e:
+            logging.error(f"Error in native Windows clipboard write: {e}")
+            return False
+
     def get_text_content(self):
         system = platform.system()
         if system == "Linux":
@@ -28,6 +120,12 @@ class ArcClipboard:
                 except Exception:
                     return ""
         elif system == "Windows":
+            # 1. Try native ctypes first (fast, 0% CPU)
+            text = self._get_win_clipboard_text()
+            if text is not None:
+                return text
+                
+            # 2. Fallback to PowerShell
             try:
                 process = subprocess.Popen(
                     ['powershell.exe', '-NoProfile', '-Command', 'Get-Clipboard'],
@@ -43,61 +141,87 @@ class ArcClipboard:
 
     def check_and_save_clipboard_image(self):
         system = platform.system()
-        if system != "Linux":
-            return None
-        try:
-            # Check if clipboard contains an image via wl-paste (Wayland)
-            result = subprocess.run(
-                ['wl-paste', '--list-types'],
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                text=True
-            )
-            mime_types = result.stdout.strip().split('\n')
-            image_type = next((t for t in mime_types if t.startswith('image/')), None)
-            if not image_type:
-                # Fallback: try xclip for X11
+        cache_dir = os.path.join(os.path.expanduser("~"), ".cache", "arc")
+        os.makedirs(cache_dir, exist_ok=True)
+        img_path = os.path.join(cache_dir, "arc_clip_img.png")
+
+        if system == "Windows":
+            if not self._has_win_clipboard_image():
+                return None
+            try:
+                # Spawns powershell ONLY when we know an image is actually in the clipboard
+                ps_cmd = (
+                    "Add-Type -AssemblyName System.Windows.Forms; "
+                    "Add-Type -AssemblyName System.Drawing; "
+                    "if ([System.Windows.Forms.Clipboard]::ContainsImage()) { "
+                    "  $img = [System.Windows.Forms.Clipboard]::GetImage(); "
+                    f"  $img.Save('{img_path}', [System.Drawing.Imaging.ImageFormat]::Png); "
+                    "  Write-Output 'SAVED'; "
+                    "}"
+                )
                 result = subprocess.run(
-                    ['xclip', '-selection', 'clipboard', '-t', 'TARGETS', '-o'],
+                    ['powershell.exe', '-NoProfile', '-Command', ps_cmd],
                     stdout=subprocess.PIPE,
                     stderr=subprocess.PIPE,
                     text=True
                 )
-                if 'image/png' in result.stdout:
-                    image_type = 'image/png'
-            if image_type:
-                cache_dir = os.path.join(os.path.expanduser("~"), ".cache", "arc")
-                os.makedirs(cache_dir, exist_ok=True)
-                img_path = os.path.join(cache_dir, "arc_clip_img.png")
-                # Try Wayland first
-                try:
+                if "SAVED" in result.stdout:
+                    return img_path
+            except Exception as e:
+                logging.error(f"Failed to check/save Windows clipboard image: {e}")
+            return None
+
+        elif system == "Linux":
+            try:
+                # Check if clipboard contains an image via wl-paste (Wayland)
+                result = subprocess.run(
+                    ['wl-paste', '--list-types'],
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    text=True
+                )
+                mime_types = result.stdout.strip().split('\n')
+                image_type = next((t for t in mime_types if t.startswith('image/')), None)
+                if not image_type:
+                    # Fallback: try xclip for X11
                     result = subprocess.run(
-                        ['wl-paste', '--type', image_type],
+                        ['xclip', '-selection', 'clipboard', '-t', 'TARGETS', '-o'],
                         stdout=subprocess.PIPE,
                         stderr=subprocess.PIPE,
-                        start_new_session=True
+                        text=True
                     )
-                    if result.returncode == 0 and len(result.stdout) > 0:
-                        with open(img_path, 'wb') as f:
-                            f.write(result.stdout)
-                        return img_path
-                except Exception:
-                    pass
-                # Fallback to xclip
-                try:
-                    result = subprocess.run(
-                        ['xclip', '-selection', 'clipboard', '-t', 'image/png', '-o'],
-                        stdout=subprocess.PIPE,
-                        stderr=subprocess.PIPE
-                    )
-                    if result.returncode == 0 and len(result.stdout) > 0:
-                        with open(img_path, 'wb') as f:
-                            f.write(result.stdout)
-                        return img_path
-                except Exception:
-                    pass
-        except Exception as e:
-            logging.error(f"Failed to check/save clipboard image: {e}")
+                    if 'image/png' in result.stdout:
+                        image_type = 'image/png'
+                if image_type:
+                    # Try Wayland first
+                    try:
+                        result = subprocess.run(
+                            ['wl-paste', '--type', image_type],
+                            stdout=subprocess.PIPE,
+                            stderr=subprocess.PIPE,
+                            start_new_session=True
+                        )
+                        if result.returncode == 0 and len(result.stdout) > 0:
+                            with open(img_path, 'wb') as f:
+                                f.write(result.stdout)
+                            return img_path
+                    except Exception:
+                        pass
+                    # Fallback to xclip
+                    try:
+                        result = subprocess.run(
+                            ['xclip', '-selection', 'clipboard', '-t', 'image/png', '-o'],
+                            stdout=subprocess.PIPE,
+                            stderr=subprocess.PIPE
+                        )
+                        if result.returncode == 0 and len(result.stdout) > 0:
+                            with open(img_path, 'wb') as f:
+                                f.write(result.stdout)
+                            return img_path
+                    except Exception:
+                        pass
+            except Exception as e:
+                logging.error(f"Failed to check/save Linux clipboard image: {e}")
         return None
 
     def get_content(self):
@@ -119,7 +243,6 @@ class ArcClipboard:
             return True
         
         # Set last_content BEFORE writing to clipboard
-        # so wl-paste --watch doesn't echo it back as a new change
         self.last_content = text
 
         system = platform.system()
@@ -139,6 +262,12 @@ class ArcClipboard:
                 except Exception:
                     return False
         elif system == "Windows":
+            # 1. Try native ctypes first (fast, clean)
+            if self._set_win_clipboard_text(text):
+                self.last_content = text
+                return True
+                
+            # 2. Fallback to PowerShell
             try:
                 p = subprocess.Popen(
                     ['powershell.exe', '-NoProfile', '-Command', '$Input | Set-Clipboard'],
@@ -149,7 +278,7 @@ class ArcClipboard:
                 self.last_content = text
                 return True
             except Exception as e:
-                logging.error(f"Failed to write Windows clipboard: {e}")
+                logging.error(f"Failed to write Windows clipboard via PowerShell fallback: {e}")
                 return False
         return False
 

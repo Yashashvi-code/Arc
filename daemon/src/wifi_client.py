@@ -10,17 +10,20 @@ import sys
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 
 MAGIC_BYTES = b"ARC\x01"
-HEADER_SIZE = 65
+HEADER_SIZE = 81
 
 TYPE_METADATA = 0x01
 TYPE_DATA = 0x02
 TYPE_CANCEL = 0x03
 
 class ArcWifiClient:
-    def __init__(self, host="127.0.0.1", port=59152, chunk_size=1024*1024):
+    def __init__(self, host="127.0.0.1", port=59152, chunk_size=1024*1024, auth_token=""):
         self.host = host
         self.port = port
         self.chunk_size = chunk_size
+        self.auth_token_bytes = bytes.fromhex(auth_token) if auth_token else b"\x00" * 16
+        if len(self.auth_token_bytes) != 16:
+            self.auth_token_bytes = b"\x00" * 16
 
     def make_header(self, p_type, session_id, chunk_idx, payload):
         session_uuid_bytes = uuid.UUID(session_id).bytes
@@ -30,6 +33,7 @@ class ArcWifiClient:
         header = bytearray()
         header.extend(MAGIC_BYTES)
         header.append(p_type)
+        header.extend(self.auth_token_bytes)
         header.extend(session_uuid_bytes)
         header.extend(struct.pack("!Q", chunk_idx))
         header.extend(struct.pack("!I", payload_len))

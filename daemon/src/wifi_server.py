@@ -10,7 +10,7 @@ from pathlib import Path
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 
 MAGIC_BYTES = b"ARC\x01"
-HEADER_SIZE = 65  # 4 (magic) + 1 (type) + 16 (uuid) + 8 (chunk_idx) + 4 (length) + 32 (checksum)
+HEADER_SIZE = 81  # 4 (magic) + 1 (type) + 16 (token) + 16 (uuid) + 8 (chunk_idx) + 4 (length) + 32 (checksum)
 
 # Packet types
 TYPE_METADATA = 0x01
@@ -39,11 +39,21 @@ class ArcWifiServer:
             return None
             
         p_type = header_bytes[4]
-        session_uuid_bytes = header_bytes[5:21]
+        token_bytes = header_bytes[5:21]
+        
+        # Verify auth token if running as daemon
+        if self.daemon and hasattr(self.daemon, "db"):
+            expected_token = self.daemon.db.get_auth_token()
+            expected_bytes = bytes.fromhex(expected_token)
+            if token_bytes != expected_bytes:
+                logging.error("Unauthorized TCP packet: security token mismatch.")
+                return None
+
+        session_uuid_bytes = header_bytes[21:37]
         session_uuid = str(uuid.UUID(bytes=session_uuid_bytes))
-        chunk_idx = struct.unpack("!Q", header_bytes[21:29])[0]
-        payload_len = struct.unpack("!I", header_bytes[29:33])[0]
-        checksum = header_bytes[33:65]
+        chunk_idx = struct.unpack("!Q", header_bytes[37:45])[0]
+        payload_len = struct.unpack("!I", header_bytes[45:49])[0]
+        checksum = header_bytes[49:81]
         
         return {
             "type": p_type,
@@ -87,6 +97,7 @@ class ArcWifiServer:
         return bytes(data)
 
     def handle_client(self, client_socket):
+        client_socket.settimeout(30.0)
         try:
             while True:
                 header_bytes = self.receive_all(client_socket, HEADER_SIZE)
@@ -96,7 +107,7 @@ class ArcWifiServer:
                     
                 header = self.parse_header(header_bytes)
                 if not header:
-                    logging.warning("Malformed header. Closing connection.")
+                    logging.warning("Malformed header or invalid token. Closing connection.")
                     break
 
                 session_id = header["session_id"]
@@ -115,7 +126,14 @@ class ArcWifiServer:
                         break
                     
                     metadata = json.loads(payload.decode('utf-8'))
-                    file_name = metadata["file_name"]
+                    raw_file_name = metadata["file_name"]
+                    
+                    # Sanitize file_name to prevent path traversal
+                    file_name = os.path.basename(raw_file_name)
+                    if not file_name or file_name in (".", "..") or "/" in raw_file_name or "\\" in raw_file_name or ".." in raw_file_name:
+                        logging.warning(f"Malicious or invalid filename detected: '{raw_file_name}'. Sanitizing to 'safe_transfer'.")
+                        file_name = "safe_transfer"
+                        
                     total_size = metadata["total_size"]
                     file_hash = metadata.get("file_hash", "")
                     is_clipboard = metadata.get("is_clipboard", False)
@@ -296,17 +314,36 @@ class ArcWifiServer:
         if is_clipboard:
             try:
                 import subprocess
-                # Linux: write image to cache and set clipboard via wl-copy
+                import shutil
+                import platform
+                system = platform.system()
+                
                 cache_dir = os.path.join(os.path.expanduser("~"), ".cache", "arc")
                 os.makedirs(cache_dir, exist_ok=True)
                 img_dest = os.path.join(cache_dir, file_name)
-                os.rename(part_file_path, img_dest)
-                subprocess.Popen(
-                    ['wl-copy', '--type', 'image/png'],
-                    stdin=open(img_dest, 'rb'),
-                    stderr=subprocess.DEVNULL
-                )
-                logging.info("Synced phone image to Linux clipboard.")
+                shutil.move(part_file_path, img_dest)
+                
+                if system == "Linux":
+                    with open(img_dest, 'rb') as f:
+                        subprocess.run(
+                            ['wl-copy', '--type', 'image/png'],
+                            stdin=f,
+                            stderr=subprocess.DEVNULL
+                        )
+                    logging.info("Synced phone image to Linux clipboard.")
+                elif system == "Windows":
+                    ps_cmd = (
+                        "Add-Type -AssemblyName System.Windows.Forms; "
+                        "Add-Type -AssemblyName System.Drawing; "
+                        f"$img = [System.Drawing.Image]::FromFile('{img_dest}'); "
+                        "[System.Windows.Forms.Clipboard]::SetImage($img); "
+                        "$img.Dispose();"
+                    )
+                    subprocess.run(
+                        ['powershell.exe', '-NoProfile', '-Command', ps_cmd],
+                        stderr=subprocess.DEVNULL
+                    )
+                    logging.info("Synced phone image to Windows clipboard.")
 
                 if self.daemon and self.daemon.db:
                     self.daemon.db.insert_clipboard("RCVD: CLIPBOARD IMAGE", is_file=True)
@@ -322,13 +359,14 @@ class ArcWifiServer:
                             self.daemon.loop
                         )
             except Exception as e:
-                logging.error(f"Failed to copy synced image to Linux clipboard: {e}")
+                logging.error(f"Failed to copy synced image to clipboard: {e}")
 
             if session_id in self.sessions:
                 del self.sessions[session_id]
             return
 
         # Move file to storage
+        import shutil
         base, extension = os.path.splitext(file_name)
         dest_path = os.path.join(self.storage_dir, file_name)
         counter = 1
@@ -337,14 +375,15 @@ class ArcWifiServer:
             dest_path = os.path.join(self.storage_dir, f"{base}_{counter}{extension}")
             counter += 1
             
-        logging.info(f"Renaming {part_file_path} to {dest_path}...")
+        logging.info(f"Moving {part_file_path} to {dest_path}...")
         try:
-            os.rename(part_file_path, dest_path)
+            shutil.move(part_file_path, dest_path)
             logging.info(f"File transfer complete. Saved to {dest_path}")
             if self.daemon and self.daemon.db:
                 final_name = os.path.basename(dest_path)
                 self.daemon.db.insert_clipboard(f"RCVD: {final_name}", is_file=True)
         except Exception as e:
+            logging.error(f"Move failed: {e}")
             logging.error(f"Rename failed: {e}")
         
         # Broadcast completion to panel
