@@ -11,6 +11,7 @@ let statusText;
 let pcIpLabel;
 let downloadsPathLabel;
 let targetIpLabel;
+let authTokenLabel;
 let textShareBox;
 let sendTextBtn;
 let dropZone;
@@ -102,6 +103,9 @@ function handleEvent(event, data) {
       }
       if (data.downloads_path) {
         downloadsPathLabel.textContent = data.downloads_path.toUpperCase();
+      }
+      if (data.auth_token && authTokenLabel) {
+        authTokenLabel.textContent = data.auth_token;
       }
       break;
       
@@ -254,6 +258,7 @@ window.addEventListener("DOMContentLoaded", () => {
   pcIpLabel = document.querySelector("#pc-ip-label");
   downloadsPathLabel = document.querySelector("#downloads-path-label");
   targetIpLabel = document.querySelector("#target-ip-label");
+  authTokenLabel = document.querySelector("#auth-token-label");
   textShareBox = document.querySelector("#text-share-box");
   sendTextBtn = document.querySelector("#send-text-btn");
   dropZone = document.querySelector("#drop-zone");
