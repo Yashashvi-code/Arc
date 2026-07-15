@@ -369,6 +369,12 @@ class ArcWifiServer:
                 logging.info(f"Calculated file hash: {calc_hash}")
                 if calc_hash != expected_hash:
                     logging.error(f"Integrity check failed! Expected hash: {expected_hash}, calculated: {calc_hash}")
+                    if os.path.exists(part_file_path):
+                        try:
+                            os.remove(part_file_path)
+                            logging.info("Deleted corrupted partial file from temp storage.")
+                        except Exception as rm_err:
+                            logging.error(f"Failed to delete corrupted file: {rm_err}")
                     if self.daemon and self.daemon.loop:
                         asyncio.run_coroutine_threadsafe(
                             self.daemon.ws_server.broadcast("transfer_stats", {
@@ -384,6 +390,12 @@ class ArcWifiServer:
                     return
             except Exception as e:
                 logging.error(f"Failed to verify integrity hash: {e}")
+                if os.path.exists(part_file_path):
+                    try:
+                        os.remove(part_file_path)
+                        logging.info("Deleted corrupted partial file from temp storage after exception.")
+                    except Exception as rm_err:
+                        logging.error(f"Failed to delete corrupted file: {rm_err}")
                 if self.daemon and self.daemon.loop:
                     asyncio.run_coroutine_threadsafe(
                         self.daemon.ws_server.broadcast("transfer_stats", {
