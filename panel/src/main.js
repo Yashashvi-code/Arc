@@ -23,10 +23,7 @@ let pairingIpLabel;
 let pairingApproveBtn;
 let pairingRejectBtn;
 
-let socket = null;
-let currentSpeed = 0.0;
-let currentTransferState = "IDLE";
-let currentProgress = 0.0;
+let activeTransfers = {};
 let _reconnectDelay = 500;
 
 function connect() {
@@ -53,12 +50,8 @@ function connect() {
     statusLed.classList.remove("connected");
     statusLed.classList.remove("active");
     statusText.textContent = "OFFLINE";
-    progressStatusLabel.textContent = "OFFLINE";
-    progressSpeedLabel.textContent = "";
-    progressBar.style.width = "0%";
-    progressBar.classList.remove("alive");
-    currentSpeed = 0.0;
-    currentTransferState = "IDLE";
+    activeTransfers = {};
+    updateProgressDeck();
     
     // Exponential backoff: 500ms → 1s → 2s → 4s → max 30s
     const delay = _reconnectDelay;
@@ -110,66 +103,26 @@ function handleEvent(event, data) {
       break;
       
     case "transfer_stats":
-      currentSpeed = data.speed_mb || 0.0;
-      currentTransferState = data.state || "IDLE";
-      currentProgress = data.progress_percent || 0;
-
-      if (currentTransferState === "TRANSFERRING") {
-        progressStatusLabel.textContent = `SENDING: ${(data.file_name || "FILE").toUpperCase()}`;
-        progressStatusLabel.style.color = "var(--text-primary)";
-        progressSpeedLabel.textContent = currentSpeed > 0 ? `${currentSpeed.toFixed(1)} MB/S` : "MEASURING...";
-        progressBar.style.width = `${currentProgress}%`;
-        progressBar.classList.add("alive");
-      } else if (currentTransferState === "RECEIVING") {
-        progressStatusLabel.textContent = `RECEIVING: ${(data.file_name || "FILE").toUpperCase()}`;
-        progressStatusLabel.style.color = "var(--accent-lime)";
-        progressSpeedLabel.textContent = currentSpeed > 0 ? `${currentSpeed.toFixed(1)} MB/S` : "MEASURING...";
-        progressBar.style.width = `${currentProgress}%`;
-        progressBar.classList.add("alive");
-      } else if (currentTransferState === "CONNECTING") {
-        progressStatusLabel.textContent = "CONNECTING DROP...";
-        progressStatusLabel.style.color = "var(--accent-lime)";
-        progressSpeedLabel.textContent = "";
-        progressBar.style.width = "0%";
-        progressBar.classList.add("alive");
-      } else if (currentTransferState === "SENT") {
-        progressStatusLabel.textContent = `SENT: ${(data.file_name || "FILE").toUpperCase()}`;
-        progressStatusLabel.style.color = "var(--accent-green)";
-        progressSpeedLabel.textContent = "";
-        progressBar.style.width = "100%";
-      } else if (currentTransferState === "COMPLETED") {
-        progressStatusLabel.textContent = `RECEIVED: ${(data.file_name || "FILE").toUpperCase()}`;
-        progressStatusLabel.style.color = "var(--accent-lime)";
-        progressSpeedLabel.textContent = "";
-        progressBar.style.width = "100%";
-        progressBar.classList.remove("alive");
+      if (data && data.state) {
+        const sessionId = data.session_id || "default_session";
+        const isFinalState = data.state === "SENT" || data.state === "COMPLETED" || data.state === "ERROR";
         
-        setTimeout(() => {
-          if (currentTransferState === "COMPLETED") {
-            progressStatusLabel.textContent = "READY";
-            progressStatusLabel.style.color = "var(--text-primary)";
-            progressBar.style.width = "0%";
-          }
-        }, 3000);
-      } else if (currentTransferState === "ERROR") {
-        progressStatusLabel.textContent = (data.error || "TRANSFER ERROR").toUpperCase();
-        progressStatusLabel.style.color = "red";
-        progressSpeedLabel.textContent = "";
-        progressBar.style.width = "0%";
-        progressBar.classList.remove("alive");
+        activeTransfers[sessionId] = {
+          fileName: data.file_name || "FILE",
+          progress: data.progress_percent || 0,
+          speed: data.speed_mb || 0.0,
+          state: data.state,
+          error: data.error || null
+        };
         
-        setTimeout(() => {
-          if (currentTransferState === "ERROR") {
-            progressStatusLabel.textContent = "READY";
-            progressStatusLabel.style.color = "var(--text-primary)";
-          }
-        }, 3000);
-      } else {
-        progressStatusLabel.textContent = "READY";
-        progressStatusLabel.style.color = "var(--text-primary)";
-        progressSpeedLabel.textContent = "";
-        progressBar.style.width = "0%";
-        progressBar.classList.remove("alive");
+        updateProgressDeck();
+        
+        if (isFinalState) {
+          setTimeout(() => {
+            delete activeTransfers[sessionId];
+            updateProgressDeck();
+          }, 3000);
+        }
       }
       break;
       
@@ -179,6 +132,93 @@ function handleEvent(event, data) {
         pairingModal.style.display = "flex";
       }
       break;
+  }
+}
+
+function updateProgressDeck() {
+  const sessions = Object.keys(activeTransfers);
+  if (sessions.length === 0) {
+    if (socket && socket.readyState === WebSocket.OPEN) {
+      progressStatusLabel.textContent = "READY";
+      progressStatusLabel.style.color = "var(--text-primary)";
+    } else {
+      progressStatusLabel.textContent = "OFFLINE";
+      progressStatusLabel.style.color = "var(--text-secondary)";
+    }
+    progressSpeedLabel.textContent = "";
+    progressBar.style.width = "0%";
+    progressBar.classList.remove("alive");
+    return;
+  }
+
+  const activeSessions = [];
+  const finishedSessions = [];
+  
+  for (const sid of sessions) {
+    const s = activeTransfers[sid];
+    if (s.state === "SENT" || s.state === "COMPLETED" || s.state === "ERROR") {
+      finishedSessions.push(s);
+    } else {
+      activeSessions.push(s);
+    }
+  }
+
+  if (activeSessions.length > 0) {
+    const totalProgress = activeSessions.reduce((sum, s) => sum + s.progress, 0);
+    const avgProgress = Math.round(totalProgress / activeSessions.length);
+    const totalSpeed = activeSessions.reduce((sum, s) => sum + s.speed, 0);
+    
+    const isReceiving = activeSessions.some(s => s.state === "RECEIVING");
+    const isConnecting = activeSessions.every(s => s.state === "CONNECTING");
+    
+    if (isConnecting) {
+      progressStatusLabel.textContent = "CONNECTING DROPS...";
+      progressStatusLabel.style.color = "var(--accent-lime)";
+      progressSpeedLabel.textContent = "";
+      progressBar.style.width = "0%";
+      progressBar.classList.add("alive");
+    } else if (isReceiving) {
+      const countLabel = activeSessions.length === 1 ? `1 FILE` : `${activeSessions.length} FILES`;
+      progressStatusLabel.textContent = `RECEIVING ${countLabel}`;
+      progressStatusLabel.style.color = "var(--accent-lime)";
+      progressSpeedLabel.textContent = totalSpeed > 0 ? `${totalSpeed.toFixed(1)} MB/S` : "MEASURING...";
+      progressBar.style.width = `${avgProgress}%`;
+      progressBar.classList.add("alive");
+    } else {
+      const countLabel = activeSessions.length === 1 ? `1 FILE` : `${activeSessions.length} FILES`;
+      progressStatusLabel.textContent = `SENDING ${countLabel}`;
+      progressStatusLabel.style.color = "var(--text-primary)";
+      progressSpeedLabel.textContent = totalSpeed > 0 ? `${totalSpeed.toFixed(1)} MB/S` : "MEASURING...";
+      progressBar.style.width = `${avgProgress}%`;
+      progressBar.classList.add("alive");
+    }
+  } else {
+    const hasError = finishedSessions.some(s => s.state === "ERROR");
+    const isSent = finishedSessions.every(s => s.state === "SENT");
+    
+    progressBar.classList.remove("alive");
+    
+    if (hasError) {
+      const errorMsg = finishedSessions.find(s => s.state === "ERROR")?.error || "TRANSFER ERROR";
+      progressStatusLabel.textContent = errorMsg.toUpperCase();
+      progressStatusLabel.style.color = "red";
+      progressSpeedLabel.textContent = "";
+      progressBar.style.width = "0%";
+    } else if (isSent) {
+      progressStatusLabel.textContent = finishedSessions.length === 1 
+        ? `SENT: ${finishedSessions[0].fileName.toUpperCase()}`
+        : `SENT ${finishedSessions.length} FILES`;
+      progressStatusLabel.style.color = "var(--accent-green)";
+      progressSpeedLabel.textContent = "";
+      progressBar.style.width = "100%";
+    } else {
+      progressStatusLabel.textContent = finishedSessions.length === 1 
+        ? `RECEIVED: ${finishedSessions[0].fileName.toUpperCase()}`
+        : `RECEIVED ${finishedSessions.length} FILES`;
+      progressStatusLabel.style.color = "var(--accent-lime)";
+      progressSpeedLabel.textContent = "";
+      progressBar.style.width = "100%";
+    }
   }
 }
 
