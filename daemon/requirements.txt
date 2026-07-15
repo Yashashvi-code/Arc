@@ -1,2 +1,4 @@
 bless
 websockets
+pystray
+pillow
