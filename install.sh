@@ -64,7 +64,12 @@ update-desktop-database "$HOME/.local/share/applications/" 2>/dev/null || true
 echo "[ ARC ] Adding shell alias..."
 grep -q "alias arc=" "$HOME/.bashrc" || echo "alias arc='$ARC_DIR/.venv/bin/python3 $ARC_DIR/arc_tray.py &'" >> "$HOME/.bashrc"
 
+echo "[ ARC ] Launching Arc in the background..."
+nohup "$ARC_DIR/.venv/bin/python3" "$ARC_DIR/arc_tray.py" > /dev/null 2>&1 &
+
 echo ""
-echo "[ ARC ] Installation complete."
-echo "[ ARC ] Launch Arc from your app drawer or type: arc"
+echo "==========================================="
+echo "   INSTALL COMPLETED SUCCESSFULLY!"
+echo "   Arc is now active in your System Tray!"
+echo "==========================================="
 echo "[ ARC ] Right-click the tray icon to quit."
