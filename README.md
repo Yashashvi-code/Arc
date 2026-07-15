@@ -1,5 +1,5 @@
 # ARC // ECOSYSTEM LINK ENGINE
-### v2.0 — Local Subnet Bridge for Linux + Windows + Android
+### v3.0 — Local Subnet Bridge for Linux + Windows + Android
 
 ```
     ___    ____  ______
@@ -13,7 +13,7 @@
 
 Arc bridges your laptop and Android phone over your local network — clipboard sync, file transfer, image sync — all over WiFi and Bluetooth LE. Nothing leaves your subnet.
 
-**v2.0 adds full Windows support** with a native system tray launcher, native Win32 clipboard bindings (0% CPU overhead), invisible BLE-based security token pairing, path traversal protection, and a hardened 81-byte TCP protocol header.
+**v3.0 adds a dynamic multi-drop active transfer queue UI, automated folder zipping for directory drops, local offline font bundling, Compose GPU optimization, and 0% CPU native Win32 ctypes clipboard bindings.**
 
 ---
 

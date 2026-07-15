@@ -29,3 +29,7 @@ D:/
 
 # Icons generated locally
 arc.png
+
+# Temporary downloads
+downloads/*
+!downloads/.gitkeep
