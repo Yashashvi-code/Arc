@@ -33,3 +33,6 @@ arc.png
 # Temporary downloads
 downloads/*
 !downloads/.gitkeep
+
+# Exclude compiled root executables
+panel.exe
