@@ -1,5 +1,5 @@
 # ARC // ECOSYSTEM LINK ENGINE
-### v1.0 — Local Subnet Bridge for Linux + Android
+### v2.0 — Local Subnet Bridge for Linux + Windows + Android
 
 ```
     ___    ____  ______
@@ -11,17 +11,20 @@
 
 > Zero cloud. Zero account. One command.
 
-Arc bridges your Linux laptop and Android phone over your local network — clipboard sync, file transfer, image sync — all over WiFi and Bluetooth LE. Nothing leaves your subnet.
+Arc bridges your laptop and Android phone over your local network — clipboard sync, file transfer, image sync — all over WiFi and Bluetooth LE. Nothing leaves your subnet.
+
+**v2.0 adds full Windows support** with a native system tray launcher, native Win32 clipboard bindings (0% CPU overhead), invisible BLE-based security token pairing, path traversal protection, and a hardened 81-byte TCP protocol header.
 
 ---
 
 ## WHAT IT DOES
 
-- **Clipboard sync** — copy on Linux, paste on phone. Copy on phone, open Arc, it's there on Linux.
+- **Clipboard sync** — copy on your laptop, paste on phone. Copy on phone, it's on your laptop.
 - **File transfer** — any file, any size. No limit. SHA-256 integrity verified, resume-capable.
-- **Image clipboard** — copy a screenshot on Linux, it lands in your phone clipboard automatically.
+- **Image clipboard** — copy a screenshot on your laptop, it lands in your phone clipboard automatically.
 - **Live transfer panel** — dot-matrix style desktop UI showing transfer speed, progress, and status in real time.
-- **BLE pairing** — tap PAIR once. Both devices exchange IPs automatically. Everything works from that point.
+- **BLE pairing** — tap PAIR once. Both devices exchange IPs and security tokens automatically. Everything works from that point.
+- **Security** — Auth token handshake on every TCP connection. No rogue device on your network can interact with Arc.
 
 ---
 
@@ -31,7 +34,14 @@ Arc bridges your Linux laptop and Android phone over your local network — clip
 - Ubuntu 22.04+ (tested on 24.04, Wayland)
 - Python 3.10+
 - Node.js 18+
-- Rust + Cargo (installed via rustup)
+- Rust + Cargo (via rustup)
+- Bluetooth adapter
+
+**Windows:**
+- Windows 10/11 (64-bit)
+- Python 3.10+ ([python.org](https://python.org))
+- Node.js 18+ ([nodejs.org](https://nodejs.org))
+- Rust + Cargo (via [rustup.rs](https://rustup.rs))
 - Bluetooth adapter
 
 **Android:**
@@ -107,91 +117,142 @@ source ~/.bashrc
 
 ---
 
+## WINDOWS SETUP
+
+**1. Clone the repo**
+```powershell
+git clone https://github.com/Yashashvi-code/Arc.git
+cd Arc
+```
+
+**2. Install Python dependencies**
+```powershell
+pip install -r daemon/requirements.txt
+pip install pystray pillow
+```
+
+**3. Open firewall port**
+
+Run PowerShell **as Administrator**:
+```powershell
+New-NetFirewallRule -DisplayName "Arc Ecosystem" -Direction Inbound -Protocol TCP -LocalPort 59152 -Action Allow
+```
+
+**4. Build the desktop panel**
+```powershell
+cd panel
+npm install
+npm run tauri build
+cd ..
+```
+> First build takes 3–5 minutes. Rust will be downloaded automatically if needed.
+> The built panel binary will be at `panel\src-tauri\target\release\panel.exe`.
+
+**5. Launch Arc**
+```powershell
+python arc_tray_win.py
+```
+
+A white circle icon with a red dot appears in your **system tray** (bottom-right, near the clock). The Arc daemon starts silently in the background. The desktop panel opens automatically after a few seconds and switches to **ONLINE**.
+
+> **No panel.exe yet?** Arc automatically falls back to launching the panel in development mode (`npm run tauri dev`). The first launch in dev mode takes ~30 seconds to compile — the dashboard will show OFFLINE and then flip to ONLINE once the daemon is connected. This is normal.
+
+---
+
 ## ANDROID SETUP
 
-**Install the APK via USB**
+The same Android app works with both the Linux and Windows PC daemon.
 
-1. Enable **Developer Options** on your phone:
-   Settings → About Phone → tap Build Number 7 times
+**1. Enable Developer Options on your phone**
 
-2. Enable **USB Debugging**:
-   Settings → Developer Options → USB Debugging → ON
+Settings → About Phone → tap **Build Number** 7 times
 
-3. Connect your phone via USB cable
+**2. Enable USB Debugging**
 
-4. Install ADB if not already installed:
+Settings → Developer Options → USB Debugging → **ON**
+
+**3. Connect your phone via USB cable**
+
+**4. Install via ADB** (from Linux or Windows)
+
+Linux:
 ```bash
 sudo apt install adb
 ```
 
-5. Build and install the Arc APK:
+Windows — ADB is bundled with the Android SDK Platform Tools. If you have Android Studio installed, adb is already available. Otherwise download [Platform Tools](https://developer.android.com/studio/releases/platform-tools).
+
+**5. Build and install the APK**
+
+Linux:
 ```bash
-# Install Java if needed
+# Install Java 17 if needed
 sudo apt install openjdk-17-jdk
 
-# Create local SDK config
+# Set SDK path
 echo "sdk.dir=$HOME/.local/share/android-sdk" > android/local.properties
 
-# Install Android SDK command line tools
-mkdir -p $HOME/.local/share/android-sdk
-wget -q https://dl.google.com/android/repository/commandlinetools-linux-11076708_latest.zip -O /tmp/cmdtools.zip
-unzip -q /tmp/cmdtools.zip -d /tmp/cmdtools
-mkdir -p $HOME/.local/share/android-sdk/cmdline-tools/latest
-mv /tmp/cmdtools/cmdline-tools/* $HOME/.local/share/android-sdk/cmdline-tools/latest/
-$HOME/.local/share/android-sdk/cmdline-tools/latest/bin/sdkmanager --licenses
-$HOME/.local/share/android-sdk/cmdline-tools/latest/bin/sdkmanager "platform-tools" "platforms;android-36" "build-tools;35.0.0"
-
-# Build and install
+# Build
 cd android && chmod +x gradlew && ./gradlew assembleDebug
+
+# Install on phone
 adb install app/build/outputs/apk/debug/app-debug.apk
 cd ..
 ```
 
-> If you get a signature mismatch error (upgrading from a previous install):
-> ```bash
-> adb uninstall com.example.arc
-> adb install android/app/build/outputs/apk/debug/app-debug.apk
-> ```
+Windows:
+```powershell
+# Gradle uses the JDK 17 it downloads automatically via toolchain
+cd android
+.\gradlew.bat assembleDebug
 
-> If you don't have a prebuilt APK, build it first:
-> ```bash
-> sudo apt install openjdk-17-jdk
-> echo "sdk.dir=/mnt/extra/android-sdk" > android/local.properties
-> cd android && chmod +x gradlew && ./gradlew assembleDebug
-> cd ..
+# Install on phone (using full adb path if needed)
+adb install app\build\outputs\apk\debug\app-debug.apk
+cd ..
+```
+
+> **Signature mismatch error?** (upgrading from a previous install)
+> ```
+> adb uninstall com.example.arc
+> adb install app/build/outputs/apk/debug/app-debug.apk
 > ```
 
 ---
 
 ## RUNNING ARC
 
+**Linux:**
 ```bash
 arc
 ```
-
 Or directly:
 ```bash
 ~/Arc/start.sh
 ```
 
-This starts the daemon and opens the desktop panel. **Ctrl+C** stops everything cleanly.
+**Windows:**
+```powershell
+python arc_tray_win.py
+```
+Right-click the tray icon to open the dashboard or quit.
 
-> The panel must be open before starting a transfer for live progress to show correctly.
+> The panel must be connected (ONLINE) before starting a transfer for live progress to show correctly.
 
 ---
 
 ## PAIRING YOUR PHONE
 
-1. Make sure both devices are on the same WiFi network
-2. Start Arc on your laptop (`arc`)
+1. Make sure both devices are on the **same WiFi network**
+2. Start Arc on your laptop
 3. Open the Arc app on your phone
-4. Tap **PAIR**
+4. Tap **PAIR ECOSYSTEM**
 5. Wait for status to show **"Ecosystem paired. Laptop IP: x.x.x.x"**
 
-That's it. Both devices now know each other's IPs. Clipboard sync and file transfers are live.
+That's it. Both devices now know each other's IPs and have exchanged a security token. Clipboard sync and file transfers are live.
+
+> **BLE not available?** Use **Manual Coordinates** in the app → enter your laptop's IP (shown in the panel as PC IP) and the security token (shown in panel Settings) → tap Sync Ecosystem Coordinates.
 
 > If pairing times out, tap PAIR again. Arc auto-retries.
-> If BLE isn't available, use **Manual Coordinates** → enter your laptop's IP (shown in the panel as PC IP) → tap Sync Ecosystem Coordinates.
 
 ---
 
@@ -201,11 +262,12 @@ That's it. Both devices now know each other's IPs. Clipboard sync and file trans
 |------|-----|
 | Send file to phone | Drag into the drop zone, or click CHOOSE FILE |
 | Send file to laptop | Use the file picker in the Arc Android app |
-| Sync clipboard text | Copy on Linux — appears on phone automatically |
+| Sync clipboard text | Copy on laptop — appears on phone automatically |
 | Push phone clipboard | Open Arc app → PUSH SYSTEM CLIPBOARD |
-| Sync image clipboard | Copy image on Linux — arrives on phone clipboard within 8 seconds |
+| Sync image clipboard | Copy image on laptop — arrives on phone clipboard within 8 seconds |
+| Custom text push | Type in the Quick Text box → SYNC TEXT |
 
-**Received files** on Linux land in `~/Downloads/`
+**Received files** land in `~/Downloads/` (Linux) or `C:\Users\<you>\Downloads\` (Windows).
 
 ---
 
@@ -213,24 +275,26 @@ That's it. Both devices now know each other's IPs. Clipboard sync and file trans
 
 ```
 Arc/
-├── daemon/              # Python backend
+├── daemon/              # Python backend (cross-platform)
 │   ├── src/
-│   │   ├── main.py      # Entry point
-│   │   ├── ble_server.py
-│   │   ├── clipboard.py
-│   │   ├── db.py
-│   │   ├── wifi_server.py
-│   │   ├── wifi_client.py
-│   │   └── ws_server.py
+│   │   ├── main.py      # Entry point & orchestrator
+│   │   ├── ble_server.py    # BLE GATT pairing server
+│   │   ├── clipboard.py     # Clipboard monitor (Win32 ctypes + wl-paste)
+│   │   ├── db.py            # SQLite ring buffer + auth token store
+│   │   ├── wifi_server.py   # TCP file/clipboard receiver
+│   │   ├── wifi_client.py   # TCP file/clipboard sender
+│   │   └── ws_server.py     # WebSocket IPC → Tauri panel
 │   └── requirements.txt
-├── panel/               # Tauri desktop UI
+├── panel/               # Tauri desktop UI (builds on Linux + Windows)
 │   ├── src/             # HTML + JS frontend
 │   └── src-tauri/       # Rust backend
-├── android/             # Kotlin Android app
+├── android/             # Kotlin Android companion app
 │   └── app/src/main/
 │       ├── java/com/example/arc/
 │       └── res/
-└── start.sh             # Launch script
+├── arc_tray.py          # Linux GTK system tray launcher
+├── arc_tray_win.py      # Windows system tray launcher
+└── start.sh             # Linux launch script
 ```
 
 ---
@@ -238,46 +302,80 @@ Arc/
 ## PORTS
 
 | Port | Protocol | Purpose |
-|------|----------|---------|
+|------|----------|---------| 
 | 59152 | TCP | File transfer + clipboard over WiFi |
-| 59153 | WebSocket | Daemon ↔ Panel IPC |
+| 59153 | WebSocket | Daemon ↔ Panel IPC (localhost only) |
 
 ---
 
 ## TECHNICAL NOTES
 
-- **Transfer protocol**: Custom 65-byte TCP header with SHA-256 per-chunk integrity check and resume support
+- **Transfer protocol**: Custom 81-byte TCP header — `[4B magic] [1B type] [16B auth token] [16B session UUID] [8B chunk index] [4B payload length] [32B SHA-256 checksum]`
+- **Security**: Auth token generated on first run, stored in SQLite, exchanged invisibly over BLE on every pairing. Every TCP packet is validated against it.
+- **Clipboard (Windows)**: Native Win32 `ctypes` bindings for zero-overhead text read/write. PowerShell only spawned when a clipboard image is actually detected.
+- **Clipboard (Linux)**: `wl-paste --watch` event-driven model on Wayland. Falls back to `xclip` on X11.
 - **Speed**: EMA-smoothed throughput display, updates every 250ms
-- **BLE**: Used for device presence and pairing only. All data goes over WiFi.
-- **Clipboard**: Text syncs via BLE. Images sync via WiFi TCP with `is_clipboard` flag.
+- **BLE**: Used for device presence and IP/token exchange only. All data goes over WiFi.
 - **Storage**: SQLite ring buffer, 200 clipboard entries max, never grows unbounded
-- **No cloud**: Everything stays on your local network. No accounts, no telemetry.
+- **No cloud**: Everything stays on your local network. No accounts, no telemetry, no analytics.
 
 ---
 
 ## TROUBLESHOOTING
 
-**Daemon won't start**
+**Dashboard shows OFFLINE**
+
+Linux:
 ```bash
 source ~/Arc/.venv/bin/activate
 cd ~/Arc/daemon && python3 src/main.py
 ```
 
+Windows:
+```powershell
+python D:\Arc\daemon\src\main.py
+```
+Check the output for errors. Common causes: missing pip packages, port 59152 blocked by firewall.
+
 **BLE not advertising**
-- Ensure Bluetooth is on and not blocked: `rfkill list`
+- Ensure Bluetooth is on and not blocked: `rfkill list` (Linux)
 - Arc needs Bluetooth access — run from a user session, not SSH
+- On Windows, BLE runs in mock mode if the hardware driver doesn't support GATT server — use Manual Coordinates instead
 
 **Files not arriving on phone**
 - Confirm both devices are on the same WiFi network
 - Check pairing status — phone should show laptop IP
-- Verify port is open: `sudo ufw status`
+- Verify port is open: `sudo ufw status` (Linux) / check Windows Firewall for port 59152
 
 **Panel shows READY during transfer**
 - Open the panel *before* starting the transfer
-- Panel auto-reconnects within 500ms if it loses the WebSocket
+- Panel reconnects automatically with exponential backoff (up to 30s)
 
-**Dock icon pulsating**
-- Run the AppImage extraction step (Step 7 in setup)
+**Dock icon pulsating** (Linux)
+- Run the AppImage extraction step (Step 7 in Linux setup)
+
+**Signature mismatch on APK install**
+```
+adb uninstall com.example.arc
+adb install app-debug.apk
+```
+
+---
+
+## CHANGELOG
+
+### v2.0 — 2026-07-15
+- **Windows support**: Native system tray launcher (`arc_tray_win.py`), Win32 ctypes clipboard, Windows image clipboard sync via PowerShell
+- **Security**: 81-byte TCP auth handshake — random 32-char token generated on setup, exchanged over BLE, verified on every packet
+- **Path traversal protection**: Filename sanitization on both PC and Android sides
+- **Socket timeouts**: 30-second read/write timeouts on all connections
+- **Bug fixes**: `sync_text` daemon crash, cross-filesystem file renames, drag-drop payload mismatch
+- **Panel**: Exponential WebSocket reconnect backoff, Content Security Policy, minimum window dimensions
+- **Android**: Removed mock transfer history, clean first-launch state
+
+### v1.0 — 2026-07-12
+- Initial release: Linux + Android only
+- BLE pairing, WiFi file transfer, clipboard sync, Tauri panel
 
 ---
 
