@@ -39,12 +39,18 @@ def start_processes():
     daemon_env = os.environ.copy()
     daemon_env["PYTHONPATH"] = DAEMON_DIR
     
+    log_file_path = os.path.join(SCRIPT_DIR, "daemon_startup.log")
+    try:
+        log_file = open(log_file_path, "w", encoding="utf-8")
+    except Exception:
+        log_file = subprocess.DEVNULL
+        
     daemon_proc = subprocess.Popen(
         [PYTHON_PATH, DAEMON_PATH], 
         creationflags=creation_flags,
         env=daemon_env,
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL
+        stdout=log_file,
+        stderr=subprocess.STDOUT
     )
     
     # Wait for WebSocket server to start before launching UI panel
@@ -125,7 +131,19 @@ def main():
     )
     
     icon = pystray.Icon("Arc", make_icon(), "Arc Ecosystem Link", menu)
-    icon.run()
+    
+    # Run the tray icon loop in a background thread so the main thread remains
+    # responsive to KeyboardInterrupt (Ctrl+C) signals in Windows PowerShell
+    icon_thread = threading.Thread(target=icon.run, daemon=True)
+    icon_thread.start()
+    
+    try:
+        while True:
+            time.sleep(1)
+    except KeyboardInterrupt:
+        print("\n[INFO] KeyboardInterrupt received. Terminating processes and exiting...")
+        stop_processes()
+        icon.stop()
 
 if __name__ == "__main__":
     main()
