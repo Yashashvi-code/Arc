@@ -591,110 +591,61 @@ textarea:focus {
   gap: 16px;
 }
 
-/* Dynamic Queue Panel Styles */
-.queue-panel {
-  border: 1px solid var(--border-color);
-  background: var(--card-bg);
-  border-radius: 20px;
-  padding: 16px 20px;
-  margin-bottom: 20px;
-  transition: border-color 0.2s ease, background 0.2s ease;
+/* Progress Deck Styles */
+.progress-deck {
+  margin: 16px 0;
+  width: 100%;
 }
 
-.queue-header {
-  margin-bottom: 12px;
-}
-
-.queue-list {
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-}
-
-.queue-empty-state {
-  font-family: var(--font-data);
-  font-size: 10px;
-  color: var(--text-secondary);
-  text-align: center;
-  padding: 12px 0;
-  letter-spacing: 0.5px;
-}
-
-.queue-item {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  padding: 12px;
-  border: 1px solid var(--border-color);
-  border-radius: 12px;
-  background: var(--bg-color);
-  transition: border-color 0.2s ease, background 0.2s ease;
-}
-
-.queue-item-meta {
+.progress-status {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  font-family: var(--font-data);
   font-size: 10px;
   font-weight: 700;
-}
-
-.queue-item-name {
-  color: var(--text-primary);
-  max-width: 65%;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  letter-spacing: 0.5px;
+  margin-bottom: 6px;
+  letter-spacing: 1px;
   text-transform: uppercase;
 }
 
-.queue-item-status {
-  letter-spacing: 1px;
-  font-size: 9px;
+#progress-status-label {
+  color: var(--text-primary);
 }
 
-.queue-item-track {
+#progress-speed-label {
+  color: var(--accent-green);
+}
+
+.progress-track {
   width: 100%;
-  height: 4px;
-  background: var(--border-color);
+  height: 3px;
+  background-color: var(--border-color);
   border-radius: 2px;
   overflow: hidden;
   position: relative;
 }
 
-.queue-item-bar {
-  height: 100%;
+.progress-bar {
   width: 0%;
-  background: var(--accent-green);
-  border-radius: 2px;
-  transition: width 0.2s ease-out;
+  height: 100%;
+  background-color: var(--accent-green);
+  box-shadow: 0 0 4px var(--accent-green);
+  transition: width 0.2s ease;
 }
 
-.queue-item-bar.receiving {
-  background: var(--accent-lime);
+.progress-bar.alive {
+  background-image: linear-gradient(
+    90deg,
+    var(--accent-green) 0%,
+    var(--accent-lime) 50%,
+    var(--accent-green) 100%
+  );
+  background-size: 200% 100%;
+  animation: alive-shimmer 1.5s infinite linear;
 }
 
-.queue-item-bar.connecting {
-  background: var(--text-secondary);
-  animation: pulse-bar 1.5s infinite ease-in-out;
-}
-
-.queue-item-bar.error {
-  background: red;
-}
-
-@keyframes pulse-bar {
-  0% { opacity: 0.4; }
-  50% { opacity: 0.8; }
-  100% { opacity: 0.4; }
-}
-
-.queue-item-speed {
-  font-size: 9px;
-  color: var(--text-secondary);
-  font-family: var(--font-data);
-  align-self: flex-end;
+@keyframes alive-shimmer {
+  0% { background-position: 200% 0; }
+  100% { background-position: 0% 0; }
 }
 

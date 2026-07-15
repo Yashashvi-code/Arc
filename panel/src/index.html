@@ -66,13 +66,14 @@
           <div class="status-btn" id="send-file-btn" style="margin-top: 15px;">[ CHOOSE FILE ]</div>
         </div>
 
-        <!-- Active Transfer Queue Dashboard -->
-        <div class="queue-panel">
-          <div class="queue-header">
-            <div class="section-label">ACTIVE NETWORK DROPS</div>
+        <!-- Minimal Progress Deck (Always Visible & Adaptive) -->
+        <div class="progress-deck">
+          <div class="progress-status">
+            <span id="progress-status-label">READY</span>
+            <span id="progress-speed-label"></span>
           </div>
-          <div class="queue-list" id="queue-list">
-            <div class="queue-empty-state">No active transfers. Drop a file above to begin.</div>
+          <div class="progress-track">
+            <div class="progress-bar" id="progress-bar"></div>
           </div>
         </div>
         
